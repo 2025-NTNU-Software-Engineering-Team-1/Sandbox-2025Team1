@@ -17,7 +17,7 @@ RUN apt-get install g++ gcc -y
 RUN useradd sandbox -u 1450
 
 # result folder
-RUN mkdir /result
+RUN mkdir /result && chown sandbox:sandbox /result
 
 # sandbox binary
 COPY sandbox /usr/bin/
