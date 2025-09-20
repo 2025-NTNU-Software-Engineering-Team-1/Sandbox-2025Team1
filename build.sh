@@ -2,7 +2,7 @@
 
 # sandbox binary
 rm -f sandbox
-wget https://github.com/Normal-OJ/C-Sandbox/releases/latest/download/sandbox
+wget https://github.com/2025-NTNU-Software-Engineering-Team-1/C-Sandbox-2025Team1/releases/latest/download/sandbox
 chmod +x sandbox
 # c_cpp
 docker build -t noj-c-cpp -f c_cpp_dockerfile . --no-cache
