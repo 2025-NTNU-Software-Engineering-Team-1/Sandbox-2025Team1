@@ -39,6 +39,10 @@ jobs:
           if [ -f "$SANDBOX_DIR/tests/requirements.txt" ]; then
             pip install -r "$SANDBOX_DIR/tests/requirements.txt"
           fi
+      - name: Build sandbox assets for tests
+        run: |
+          cd "$SANDBOX_DIR"
+          ./build.sh
       - name: Run unit tests
         run: |
           cd "$SANDBOX_DIR"
