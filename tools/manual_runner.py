@@ -1,12 +1,13 @@
 """Utility for manually invoking the sandbox runner.
 
-Run this script *inside* the sandbox service container to execute a
-prepared submission and inspect the raw sandbox response.  It wraps the
-`Sandbox` class directly so that all diagnostic fields (status, stdout,
-stderr, exit message, docker exit code, …) are emitted without the
-post-processing that `SubmissionRunner` applies.
+Run this helper inside the sandbox container to execute a prepared
+submission and inspect the raw sandbox response.  It wraps the
+:class:`runner.sandbox.Sandbox` class directly so all diagnostic fields
+(status, stdout, stderr, exit message, docker exit code, …) are printed
+without the post-processing that :class:`runner.submission.SubmissionRunner`
+performs.
 
-Example:
+Example::
 
     python manual_runner.py \
         --submission 68d0478037f252dba0bda786 \
@@ -15,9 +16,8 @@ Example:
         --time-limit 1000 \
         --mem-limit 134218
 
-Add ``--compile-first`` if you also want to trigger the compilation
-stage before executing.  Use ``--no-run`` when you only care about the
-compile result.
+Add ``--compile-first`` to trigger the compilation stage before running.
+Use ``--no-run`` when you only care about the compile result.
 """
 
 from __future__ import annotations
@@ -26,13 +26,16 @@ import argparse
 import json
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any, Dict
 
 from runner.sandbox import Sandbox
 
 
-def load_config(config_path: Path) -> dict:
-    with config_path.open() as fh:
-        return json.load(fh)
+def load_config(config_path: Path) -> Dict[str, Any]:
+    """Return parsed submission runner configuration."""
+
+    with config_path.open() as handle:
+        return json.load(handle)
 
 
 def run_sandbox(
@@ -43,8 +46,10 @@ def run_sandbox(
     time_limit: int,
     mem_limit: int,
     compile_need: bool,
-    config: dict,
-) -> dict:
+    config: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Execute the sandbox with the provided configuration."""
+
     working_dir = Path(config["working_dir"])
     src_dir = working_dir / submission_id / "src"
     if not src_dir.exists():
@@ -63,8 +68,14 @@ def run_sandbox(
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments."""
+
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--submission", required=True, help="submission ID to run")
+    parser.add_argument(
+        "--submission",
+        required=True,
+        help="submission ID to run",
+    )
     parser.add_argument(
         "--lang",
         default="c11",
@@ -79,13 +90,13 @@ def parse_args() -> argparse.Namespace:
         "--time-limit",
         type=int,
         default=1000,
-        help="time limit in milliseconds (default: 1000)",
+        help="time limit in milliseconds",
     )
     parser.add_argument(
         "--mem-limit",
         type=int,
         default=262144,
-        help="memory limit in kilobytes (default: 262144)",
+        help="memory limit in kilobytes",
     )
     parser.add_argument(
         "--compile-first",
@@ -108,6 +119,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """CLI entry point."""
+
     args = parse_args()
     config = load_config(args.config)
 
@@ -116,7 +129,7 @@ def main() -> None:
             submission_id=args.submission,
             lang=args.lang,
             stdin_path=None,
-            time_limit=20000,  # align with SubmissionRunner.compile
+            time_limit=20000,
             mem_limit=1048576,
             compile_need=True,
             config=config,
