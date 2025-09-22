@@ -27,7 +27,8 @@ class Dispatcher(threading.Thread):
         super().__init__()
         self.testing = False
         # read config
-        queue_limit, container_limit = config.get_dispatcher_limits(dispatcher_config)
+        queue_limit, container_limit = config.get_dispatcher_limits(
+            dispatcher_config)
         # flag to decided whether the thread should run
         self.do_run = True
         # submission location

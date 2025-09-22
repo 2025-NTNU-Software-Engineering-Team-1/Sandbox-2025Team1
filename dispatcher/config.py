@@ -30,7 +30,8 @@ SUBMISSION_BACKUP_DIR = Path(
 SUBMISSION_DIR.mkdir(exist_ok=True)
 SUBMISSION_BACKUP_DIR.mkdir(exist_ok=True)
 
-_DEFAULT_DISPATCHER_CONFIG_PATH = Path(os.getenv('DISPATCHER_CONFIG', '.config/dispatcher.json'))
+_DEFAULT_DISPATCHER_CONFIG_PATH = Path(
+    os.getenv('DISPATCHER_CONFIG', '.config/dispatcher.json'))
 
 
 def _load_dispatcher_config(path: Path) -> dict:
@@ -43,8 +44,10 @@ def _load_dispatcher_config(path: Path) -> dict:
         return {}
 
 
-def get_dispatcher_limits(config_path: str | Path | None = None) -> tuple[int, int]:
-    path = Path(config_path) if config_path else _DEFAULT_DISPATCHER_CONFIG_PATH
+def get_dispatcher_limits(
+        config_path: str | Path | None = None) -> tuple[int, int]:
+    path = Path(
+        config_path) if config_path else _DEFAULT_DISPATCHER_CONFIG_PATH
     cfg = _load_dispatcher_config(path) if path else {}
     queue_default = cfg.get('QUEUE_SIZE', 16)
     container_default = cfg.get('MAX_CONTAINER_NUMBER', 8)
@@ -53,7 +56,8 @@ def get_dispatcher_limits(config_path: str | Path | None = None) -> tuple[int, i
     return queue_size, container_limit
 
 
-_SUBMISSION_CONFIG_PATH = Path(os.getenv('SUBMISSION_CONFIG', '.config/submission.json'))
+_SUBMISSION_CONFIG_PATH = Path(
+    os.getenv('SUBMISSION_CONFIG', '.config/submission.json'))
 
 
 def get_submission_config(config_path: str | Path | None = None) -> dict:
