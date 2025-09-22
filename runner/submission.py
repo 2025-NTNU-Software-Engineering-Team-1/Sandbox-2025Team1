@@ -1,6 +1,6 @@
-import json
 import dataclasses
 from typing import Optional
+from dispatcher import config as dispatcher_config
 from runner.sandbox import Sandbox, JudgeError
 
 
@@ -17,8 +17,7 @@ class SubmissionRunner:
         lang: Optional[str] = None,
     ):
         # config file
-        with open('.config/submission.json') as f:
-            config = json.load(f)
+        submission_cfg = dispatcher_config.get_submission_config()
         self.lang = lang
         self.special_judge = special_judge
         # required
@@ -28,10 +27,10 @@ class SubmissionRunner:
         self.testdata_input_path = testdata_input_path  # absoulte path str
         self.testdata_output_path = testdata_output_path  # absoulte path str
         # working_dir
-        self.working_dir = config['working_dir']
+        self.working_dir = submission_cfg['working_dir']
         # for language specified settings
-        self.lang_id = config['lang_id']
-        self.image = config['image']
+        self.lang_id = submission_cfg['lang_id']
+        self.image = submission_cfg['image']
 
     def compile(self):
         try:
