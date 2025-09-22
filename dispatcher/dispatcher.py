@@ -27,17 +27,14 @@ class Dispatcher(threading.Thread):
         super().__init__()
         self.testing = False
         # read config
-        d_config = {}
-        if os.path.exists(dispatcher_config):
-            with open(dispatcher_config) as f:
-                d_config = json.load(f)
+        queue_limit, container_limit = config.get_dispatcher_limits(dispatcher_config)
         # flag to decided whether the thread should run
         self.do_run = True
         # submission location
         self.SUBMISSION_DIR = config.SUBMISSION_DIR
         # task queue
         # type Queue[Tuple[submission_id, task_no]]
-        self.MAX_TASK_COUNT = d_config.get('QUEUE_SIZE', 16)
+        self.MAX_TASK_COUNT = queue_limit
         self.queue = queue.Queue(self.MAX_TASK_COUNT)
         # task result
         # type: Dict[submission_id, Tuple[submission_info, List[result]]]
@@ -47,13 +44,12 @@ class Dispatcher(threading.Thread):
         self.compile_locks = {}
         self.compile_results = {}
         # manage containers
-        self.MAX_CONTAINER_SIZE = d_config.get('MAX_CONTAINER_NUMBER', 8)
+        self.MAX_CONTAINER_SIZE = container_limit
         self.container_count_lock = threading.Lock()
         self.container_count = 0
         # read cwd from submission runner config
-        with open(submission_config) as f:
-            s_config = json.load(f)
-            self.submission_runner_cwd = pathlib.Path(s_config['working_dir'])
+        s_config = config.get_submission_config(submission_config)
+        self.submission_runner_cwd = pathlib.Path(s_config['working_dir'])
         self.timeout = 300
         self.created_at = {}
 
