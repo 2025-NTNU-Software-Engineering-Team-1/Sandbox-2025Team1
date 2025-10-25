@@ -121,6 +121,29 @@ class Dispatcher(threading.Thread):
         with (submission_path / 'meta.json').open() as f:
             submission_config = Meta.parse_obj(json.load(f))
 
+        # static analysis
+        try:
+            # 假設您從後端取得了該題目的規則
+            # (這部分邏輯需要您新增，例如擴充 get_problem_meta)
+            rules_json = self.get_static_analysis_rules(submission_config.problem_id) 
+            
+            # 執行靜態分析
+            # (source_code_path 應該是 submission_path / 'src')
+            analysis_result = StaticAnalyzer.analyze(
+                source_code_path=submission_path / 'src',
+                language=submission_config.language,
+                rules=rules_json
+            )
+            
+            if not analysis_result.is_success():
+                # 分析失敗，準備一個 "Static Analysis Failed" (SAF) 的結果
+                # 並直接呼叫 on_submission_complete 回報
+                self.report_static_analysis_failure(submission_id, analysis_result)
+                return # *** 直接結束，不進入佇列 ***
+
+        except StaticAnalysisError as e:
+            
+        
         # assign submission context
         task_content = {}
         self.result[submission_id] = (submission_config, task_content)
