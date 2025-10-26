@@ -81,7 +81,7 @@ def fetch_testdata(problem_id: int):
 
 
 # for static analysis
-def fetch_(problem_id: int) -> dict:
+def fetch_problem_rules(problem_id: int) -> dict:
     """
     Fetch static analysis rules.json from backend server
     """

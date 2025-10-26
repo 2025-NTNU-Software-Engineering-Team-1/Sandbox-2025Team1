@@ -1,3 +1,4 @@
+import subprocess, shlex
 import pathlib
 import ast
 
@@ -8,6 +9,24 @@ except ImportError:
 
 from .constant import Language
 from .utils import logger
+
+
+def detect_include_args():
+    args = []
+
+    rdir = subprocess.check_output(["clang", "-print-resource-dir"], text=True).strip()
+    args += [f"-I{pathlib.Path(rdir) / 'include'}"]
+
+    # libstdc++ path (auto)
+    cxx_inc = subprocess.check_output(
+        ["g++", "-print-file-name=include"], text=True
+    ).strip()
+    args += [f"-I{cxx_inc}"]
+
+    # try these path
+    args += ["-I/usr/include", "-I/usr/include/x86_64-linux-gnu"]
+    print(args)
+    return args
 
 
 class StaticAnalysisError(Exception):
@@ -39,6 +58,9 @@ class StaticAnalyzer:
         main Analyzer
         """
         logger().debug(f"Analysis: {source_code_path} (lang: {language})")
+
+        if not isinstance(rules, dict):
+            rules = {}
 
         try:
             if language == Language.PY:
@@ -82,7 +104,6 @@ class StaticAnalyzer:
         """
         main_py_path = source_path / "main.py"
         if not main_py_path.exists():
-
             raise StaticAnalysisError(
                 f"Not found 'main.py'. Source path: {source_path}"
             )
@@ -151,6 +172,9 @@ class StaticAnalyzer:
         main_c_path = source_path / "main.c"  # C
         main_cpp_path = source_path / "main.cpp"  # C++
 
+        # debug
+        # print(main_c_path)
+        # print(main_cpp_path)
         target_path = None
         if main_c_path.exists():
             target_path = main_c_path
@@ -160,12 +184,17 @@ class StaticAnalyzer:
             raise StaticAnalysisError(
                 f"Not found 'main.c' or 'main.cpp'.  Source path: {source_path}"
             )
+        # debug
+        # print(target_path)
 
         # (1) Ast + facts result
         try:
             index = clang.cindex.Index.create()
             # need to format str(pathlib.Path)，clang does not accept Path Obj.
-            translation_unit = index.parse(str(target_path))
+            translation_unit = index.parse(
+                str(target_path), args=["-std=c++17"] + detect_include_args()
+            )
+
         except clang.cindex.LibclangError as e:
             raise StaticAnalysisError(f"Libclang init failed: {e}")
 

@@ -1,0 +1,20 @@
+{
+    "disallow_imports": [
+        "os",
+        "sys"
+    ],
+    "disallow_syntax": [
+        "while",
+        "for"
+    ],
+    "disallow_functions": [
+        "printf",
+        "scanf",
+        "malloc",
+        "free"
+    ],
+    "disallow_headers": [
+        "stdio.h",
+        "stdlib.h"
+    ]
+}

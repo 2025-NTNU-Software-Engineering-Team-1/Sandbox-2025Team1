@@ -15,6 +15,8 @@ from .meta import Meta
 from .constant import Language
 from .utils import logger
 
+from .testdata import fetch_problem_rules
+
 from static_analysis import StaticAnalyzer, StaticAnalysisError
 
 
@@ -139,7 +141,7 @@ class Dispatcher(threading.Thread):
                     return
             else:
                 logger().debug(
-                    f"Not found problem rules skipping analysis, [problem_id: {problem_id}] "
+                    f"Not found problem rules skipping analysis, [problem_id: {problem_id}]"
                 )
         except StaticAnalysisError as e:
             logger().error(f"Static analyzer error: {e}")
@@ -418,4 +420,12 @@ class Dispatcher(threading.Thread):
             file_manager.backup_data(submission_id)
 
     def get_static_analysis_rules(self, problem_id: int):
-        return
+        logger().debug(f"Try to fetch problem rules. [problem_id: {problem_id}]")
+        try:
+            rules = fetch_problem_rules(problem_id)
+            return rules
+        except Exception as e:
+            logger().warning(
+                f"Do not fetch problem rules. [problem_id: {problem_id}] {e}"
+            )
+            return None
