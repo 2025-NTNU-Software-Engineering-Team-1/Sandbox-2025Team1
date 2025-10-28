@@ -1,3 +1,4 @@
+import json
 import requests as rq
 
 from .utils import (
@@ -34,8 +35,9 @@ def fetch_problem_rules(problem_id: int) -> dict:
     )
     try:
         handle_problem_response(resp)
+        content = json.dumps(resp.json()["data"])
+        return content
         # suppose in "rules"
-        return resp.json()["rules"]
     except ValueError:
         logger().warning(f"Not found problem rules, [problem_id: {problem_id}]")
         return None

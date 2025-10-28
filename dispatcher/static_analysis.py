@@ -2,6 +2,13 @@ import subprocess, shlex
 import pathlib
 import ast
 
+
+from pathlib import Path
+from dispatcher import config as dispatcher_config
+from dispatcher.static_analysis import StaticAnalyzer
+from dispatcher.constant import Language
+
+
 try:
     import clang.cindex  # type: ignore
 except ImportError:
@@ -52,11 +59,18 @@ class AnalysisResult:
 
 class StaticAnalyzer:
     @staticmethod
-    def analyze(source_code_path: pathlib.Path, language: Language, rules: dict = None):
+    def analyze(
+        submission_id: str,
+        language: Language,
+        rules: dict = None,
+    ):
         """
         HERE is entrance
         main Analyzer
         """
+        working_dir = Path(dispatcher_config.get_submission_config()["working_dir"])
+        source_code_path = (working_dir / submission_id / "src").resolve()
+
         logger().debug(f"Analysis: {source_code_path} (lang: {language})")
 
         if not isinstance(rules, dict):

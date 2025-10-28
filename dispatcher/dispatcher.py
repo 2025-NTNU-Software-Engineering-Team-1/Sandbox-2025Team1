@@ -128,7 +128,7 @@ class Dispatcher(threading.Thread):
 
             if rules_json:
                 analysis_result = StaticAnalyzer.analyze(
-                    source_code_path=submission_path / "src",
+                    submission_id=submission_id,
                     language=submission_config.language,
                     rules=rules_json,
                 )
