@@ -15,7 +15,7 @@ from .meta import Meta
 from .constant import Language
 from .utils import logger
 
-from .testdata import fetch_problem_rules
+from .pipeline import fetch_problem_rules
 
 from static_analysis import StaticAnalyzer, StaticAnalysisError
 
