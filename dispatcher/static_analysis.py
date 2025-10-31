@@ -204,27 +204,16 @@ class StaticAnalyzer:
                 message="[Syntax Error] Clang could not analyze",
             )
 
-        # check compile pass or not
-        if any(
-            d.severity >= clang.cindex.Diagnostic.Error
-            for d in translation_unit.diagnostics
-        ):
-            errors = [
-                d.spelling
-                for d in translation_unit.diagnostics
-                if d.severity >= clang.cindex.Diagnostic.Error
-            ]
-            return AnalysisResult(
-                success=False, message=f"[Syntax Error] Compile error: {errors[0]}"
-            )
-
         facts = {
             "headers": set(),
             "for_loops": [],
             "while_loops": [],
             "function_calls": set(),
+            "recursive_calls": [],
         }
-        analyze_c_ast(translation_unit.cursor, facts)
+        analyze_c_ast(translation_unit.cursor, facts, None, str(target_path))
+
+        print(facts)
 
         logger().debug(f"C/C++ analysis facts: {facts}")
 
@@ -236,18 +225,21 @@ class StaticAnalyzer:
         used_disallowed_headers = facts["headers"].intersection(disallowed_headers)
         if used_disallowed_headers:
             violations.append(
-                f"[Violation] Using the forbidden method: {', '.join(used_disallowed_headers)}"
+                # f"[Violation] Using the forbidden method: {', '.join(used_disallowed_headers)}"
+                f"[Violation] used_disallowed_headers {', '.join(used_disallowed_headers)}"
             )
 
         # Check 2: for and while loop
         disallowed_syntax = set(rules.get("disallow_syntax", []))
         if "for" in disallowed_syntax and facts["for_loops"]:
             violations.append(
-                f"[Violation] Using the forbidden method: (In line {facts['for_loops'][0]})"
+                # f"[Violation] Using the forbidden method: (In line {facts['for_loops'][0]})"
+                f"[Violation] for_loop In line {facts['for_loops'][0]}"
             )
         if "while" in disallowed_syntax and facts["while_loops"]:
             violations.append(
-                f"[Violation] Using the forbidden method: (In line {facts['while_loops'][0]})"
+                # f"[Violation] Using the forbidden method: (In line {facts['while_loops'][0]})"
+                f"[Violation] while_loop In line {facts['while_loops'][0]}"
             )
 
         # Check 3: function call
@@ -257,7 +249,8 @@ class StaticAnalyzer:
         )
         if used_disallowed_functions:
             violations.append(
-                f"[Violation] Using the forbidden method: {', '.join(used_disallowed_functions)}"
+                # f"[Violation] Using the forbidden method: {', '.join(used_disallowed_functions)}"
+                f"[Violation] used_disallowed_functions {', '.join(used_disallowed_functions)}"
             )
 
         # (3) Result
@@ -358,10 +351,18 @@ class PythonAstVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def analyze_c_ast(node, facts):
+# ... (在 static_analysis.py 中)
+
+
+def analyze_c_ast(node, facts, current_function_name: str | None, main_file_path: str):
     """
     for c/c++ analyze
     """
+
+    if node.location and node.location.file:
+        if node.location.file.name != main_file_path:
+            return
+    # ---------------------------------
 
     if node.kind == clang.cindex.CursorKind.INCLUSION_DIRECTIVE:
         # e.g., #include <stdio.h>
@@ -374,8 +375,18 @@ def analyze_c_ast(node, facts):
         facts["while_loops"].append(node.location.line)
 
     elif node.kind == clang.cindex.CursorKind.CALL_EXPR:
-        # e.g., "printf(...)", "malloc(...)"
-        facts["function_calls"].add(node.displayname)  # "printf", "malloc"
+        called_name = node.displayname
+        facts["function_calls"].add(called_name)
 
-    for child in node.get_children():
-        analyze_c_ast(child, facts)
+        if current_function_name is not None and called_name == current_function_name:
+            facts["recursive_calls"].append(node.location.line)
+
+    if node.kind == clang.cindex.CursorKind.FUNCTION_DECL:
+        new_func_name = node.displayname
+        for child in node.get_children():
+
+            analyze_c_ast(child, facts, new_func_name, main_file_path)
+    else:
+        for child in node.get_children():
+
+            analyze_c_ast(child, facts, current_function_name, main_file_path)
