@@ -15,8 +15,8 @@ rules_path = Path(
 )
 rules = json.loads(rules_path.read_text(encoding="utf-8"))
 res = StaticAnalyzer.analyze(
-    source_code_path=submission_path,
-    language=Language.CPP,
+    submission_id=submission_path,
+    language=Language.PY,
     rules=rules,
 )
 

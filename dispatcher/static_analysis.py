@@ -2,13 +2,6 @@ import subprocess, shlex
 import pathlib
 import ast
 
-
-from pathlib import Path
-from dispatcher import config as dispatcher_config
-from dispatcher.static_analysis import StaticAnalyzer
-from dispatcher.constant import Language
-
-
 try:
     import clang.cindex  # type: ignore
 except ImportError:
@@ -68,8 +61,11 @@ class StaticAnalyzer:
         HERE is entrance
         main Analyzer
         """
-        working_dir = Path(dispatcher_config.get_submission_config()["working_dir"])
-        source_code_path = (working_dir / submission_id / "src").resolve()
+        ## for debug
+        source_code_path = pathlib.Path(submission_id).resolve()
+        ## for real use
+        # working_dir = Path(dispatcher_config.get_submission_config()["working_dir"])
+        # source_code_path = (working_dir / submission_id / "src").resolve()
 
         logger().debug(f"Analysis: {source_code_path} (lang: {language})")
 
@@ -85,26 +81,24 @@ class StaticAnalyzer:
                     raise StaticAnalysisError(
                         "Libclang is not installed or import failed"
                     )
-                result = StaticAnalyzer._analyze_c_cpp(source_code_path, rules)
+                result = StaticAnalyzer._analyze_c_cpp(
+                    source_code_path, rules, language
+                )
 
             else:
                 logger().warning(f"Unsupported static analysis languages: {language}")
-                result = AnalysisResult(success=False)  # default false
+                result = AnalysisResult(success=True)  # default false
 
-        except StaticAnalysisError as e:
-            logger().error(f"Static Analyzer inner error : {e}")
-            return AnalysisResult(
-                success=False, message="Internal error in the Analyzer (JE)"
-            )
+        except StaticAnalysisError:
+            logger().error(f"Static Analyzer inner error", exc_info=True)
+            raise
+
         except Exception as e:
             logger().error(
                 f"An unexpected error occurred during static analysis: {e}",
                 exc_info=True,
             )
-            return AnalysisResult(
-                success=False,
-                message="An unexpected error occurred during static analysis (JE)",
-            )
+            raise StaticAnalysisError(f"An unexpected error occurred: {e}") from e
 
         if result.is_success():
             logger().debug("Static analysis passed.")
@@ -146,19 +140,21 @@ class StaticAnalyzer:
         used_disallowed_imports = facts["imports"].intersection(disallowed_imports)
         if used_disallowed_imports:
             violations.append(
-                f"[Violation] Using the forbidden method: {', '.join(used_disallowed_imports)}"
+                f"\n[Violation] Using the forbidden method: {', '.join(used_disallowed_imports)}"
             )
 
         # Check 2: for and while loop
         disallowed_syntax = set(rules.get("disallow_syntax", []))
-        if "for" in disallowed_syntax and facts["for_loops"]:
-            violations.append(
-                f"[Violation] Using the forbidden method: (In line {facts['for_loops'][0]})"
-            )
-        if "while" in disallowed_syntax and facts["while_loops"]:
-            violations.append(
-                f"[Violation] Using the forbidden method: (In line {facts['while_loops'][0]})"
-            )
+
+        if "for" in disallowed_syntax:
+            for line_num in facts["for_loops"]:
+                violations.append(f"\n[Violation] For Loop, line {line_num}")
+        if "while" in disallowed_syntax:
+            for line_num in facts["while_loops"]:
+                violations.append(f"\n[Violation] While Loop, line {line_num}")
+        if "recursive" in disallowed_syntax:
+            for line_num in facts["recursive_calls"]:
+                violations.append(f"\n[Violation] Recursive Call, line {line_num}")
 
         # Check 3: function call
         disallowed_functions = set(rules.get("disallow_functions", []))
@@ -167,7 +163,7 @@ class StaticAnalyzer:
         )
         if used_disallowed_functions:
             violations.append(
-                f"[Violation] Using the forbidden method: {', '.join(used_disallowed_functions)}"
+                f"\n[Violation] Using the forbidden method: {', '.join(used_disallowed_functions)}"
             )
 
         # (3) Result
@@ -179,7 +175,7 @@ class StaticAnalyzer:
         return AnalysisResult(success=True)
 
     @staticmethod
-    def _analyze_c_cpp(source_path: pathlib.Path, rules: dict):
+    def _analyze_c_cpp(source_path: pathlib.Path, rules: dict, language: Language):
         """
         for C/C++ use libclang
         """
@@ -204,9 +200,16 @@ class StaticAnalyzer:
         # (1) Ast + facts result
         try:
             index = clang.cindex.Index.create()
-            # need to format str(pathlib.Path)，clang does not accept Path Obj.
+            lang_args = []
+            if language == Language.C:
+                lang_args = ["-x", "c", "-std=c11"]
+            else:
+                lang_args = ["-x", "c++", "-std=c++17"]
+
             translation_unit = index.parse(
-                str(target_path), args=["-std=c++17"] + detect_include_args()
+                str(target_path),
+                args=lang_args + detect_include_args(),
+                options=clang.cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
             )
 
         except clang.cindex.LibclangError as e:
@@ -220,13 +223,14 @@ class StaticAnalyzer:
 
         facts = {
             "headers": set(),
+            "function_calls": set(),
             "for_loops": [],
             "while_loops": [],
-            "function_calls": set(),
             "recursive_calls": [],
         }
         analyze_c_ast(translation_unit.cursor, facts, None, str(target_path))
 
+        # for debug
         print(facts)
 
         logger().debug(f"C/C++ analysis facts: {facts}")
@@ -240,21 +244,20 @@ class StaticAnalyzer:
         if used_disallowed_headers:
             violations.append(
                 # f"[Violation] Using the forbidden method: {', '.join(used_disallowed_headers)}"
-                f"[Violation] used_disallowed_headers {', '.join(used_disallowed_headers)}"
+                f"\n[Violation] Used Disallowed Headers: {', '.join(used_disallowed_headers)}"
             )
 
         # Check 2: for and while loop
         disallowed_syntax = set(rules.get("disallow_syntax", []))
-        if "for" in disallowed_syntax and facts["for_loops"]:
-            violations.append(
-                # f"[Violation] Using the forbidden method: (In line {facts['for_loops'][0]})"
-                f"[Violation] for_loop In line {facts['for_loops'][0]}"
-            )
-        if "while" in disallowed_syntax and facts["while_loops"]:
-            violations.append(
-                # f"[Violation] Using the forbidden method: (In line {facts['while_loops'][0]})"
-                f"[Violation] while_loop In line {facts['while_loops'][0]}"
-            )
+        if "for" in disallowed_syntax:
+            for line_num in facts["for_loops"]:
+                violations.append(f"\n[Violation] For Loop, line {line_num}")
+        if "while" in disallowed_syntax:
+            for line_num in facts["while_loops"]:
+                violations.append(f"\n[Violation] While Loop, line {line_num}")
+        if "recursive" in disallowed_syntax:
+            for line_num in facts["recursive_calls"]:
+                violations.append(f"\n[Violation] Recursive Call, line {line_num}")
 
         # Check 3: function call
         disallowed_functions = set(rules.get("disallow_functions", []))
@@ -264,7 +267,7 @@ class StaticAnalyzer:
         if used_disallowed_functions:
             violations.append(
                 # f"[Violation] Using the forbidden method: {', '.join(used_disallowed_functions)}"
-                f"[Violation] used_disallowed_functions {', '.join(used_disallowed_functions)}"
+                f"\n[Violation] Used Disallowed Functions: {', '.join(used_disallowed_functions)}"
             )
 
         # (3) Result
@@ -284,11 +287,11 @@ class PythonAstVisitor(ast.NodeVisitor):
     def __init__(self):
         # log used "fact"
         self.facts = {
+            "imports": set(),  # log moudle name
+            "function_calls": set(),  # log func. name
             "for_loops": [],  # log line number
             "while_loops": [],  # log line number
             "recursive_calls": [],  # log line number
-            "imports": set(),  # log moudle name
-            "function_calls": set(),  # log func. name
         }
 
         # use stack to trace recursive
@@ -329,14 +332,9 @@ class PythonAstVisitor(ast.NodeVisitor):
         whlie visit func. define
         ex: def dfs():
         """
-        # 1. push now func
         current_function_name = node.name
         self.current_function_stack.append(current_function_name)
-
-        # 2. keep going visit this func.
         self.generic_visit(node)
-
-        # 3. finish then pop
         self.current_function_stack.pop()
 
     def visit_Call(self, node):
@@ -347,13 +345,8 @@ class PythonAstVisitor(ast.NodeVisitor):
         function_name_called = None
 
         if isinstance(node.func, ast.Name):
-            # e.g., "print('hello')", "eval('1+1')"
             function_name_called = node.func.id
             self.facts["function_calls"].add(function_name_called)
-
-        # check stack is recursive or not
-        # check stack is empty or not
-        # check the top of stack
         if (
             self.current_function_stack
             and function_name_called == self.current_function_stack[-1]
@@ -365,42 +358,51 @@ class PythonAstVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-# ... (在 static_analysis.py 中)
-
-
-def analyze_c_ast(node, facts, current_function_name: str | None, main_file_path: str):
-    """
-    for c/c++ analyze
-    """
-
-    if node.location and node.location.file:
-        if node.location.file.name != main_file_path:
-            return
-    # ---------------------------------
-
+def analyze_c_ast(node, facts, current_func_cursor, main_file_path: str):
+    # 1) include
     if node.kind == clang.cindex.CursorKind.INCLUSION_DIRECTIVE:
-        # e.g., #include <stdio.h>
-        facts["headers"].add(node.displayname)  # "stdio.h"
+        if node.location.file and node.location.file.name == main_file_path:
+            facts["headers"].add(node.displayname)
+        return
 
-    elif node.kind == clang.cindex.CursorKind.FOR_STMT:
-        facts["for_loops"].append(node.location.line)
+    in_main = (
+        node.location
+        and node.location.file
+        and node.location.file.name == main_file_path
+    )
 
-    elif node.kind == clang.cindex.CursorKind.WHILE_STMT:
-        facts["while_loops"].append(node.location.line)
+    if in_main:
+        if node.kind in (
+            clang.cindex.CursorKind.FOR_STMT,
+            clang.cindex.CursorKind.CXX_FOR_RANGE_STMT,
+        ):
+            facts["for_loops"].append(node.location.line)
 
-    elif node.kind == clang.cindex.CursorKind.CALL_EXPR:
-        called_name = node.displayname
-        facts["function_calls"].add(called_name)
+        elif node.kind == clang.cindex.CursorKind.WHILE_STMT:
+            facts["while_loops"].append(node.location.line)
 
-        if current_function_name is not None and called_name == current_function_name:
-            facts["recursive_calls"].append(node.location.line)
+        elif node.kind == clang.cindex.CursorKind.CALL_EXPR:
+            callee = node.referenced
+            if callee and callee.spelling:
+                facts["function_calls"].add(callee.spelling)
+            else:
+                name = node.spelling or node.displayname
+                if name:
+                    facts["function_calls"].add(name)
+
+            if (
+                current_func_cursor is not None
+                and callee is not None
+                and callee.get_usr()
+                and current_func_cursor.get_usr()
+                and callee.get_usr() == current_func_cursor.get_usr()
+            ):
+                facts["recursive_calls"].append(node.location.line)
 
     if node.kind == clang.cindex.CursorKind.FUNCTION_DECL:
-        new_func_name = node.displayname
+        new_func_cursor = node
         for child in node.get_children():
-
-            analyze_c_ast(child, facts, new_func_name, main_file_path)
+            analyze_c_ast(child, facts, new_func_cursor, main_file_path)
     else:
         for child in node.get_children():
-
-            analyze_c_ast(child, facts, current_function_name, main_file_path)
+            analyze_c_ast(child, facts, current_func_cursor, main_file_path)
