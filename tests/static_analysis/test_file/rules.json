@@ -5,7 +5,8 @@
     ],
     "disallow_syntax": [
         "while",
-        "for"
+        "for",
+        "recursive"
     ],
     "disallow_functions": [
         "printf",
@@ -15,6 +16,8 @@
     ],
     "disallow_headers": [
         "stdio.h",
-        "stdlib.h"
+        "stdlib.h",
+        "vector",
+        "string"
     ]
 }

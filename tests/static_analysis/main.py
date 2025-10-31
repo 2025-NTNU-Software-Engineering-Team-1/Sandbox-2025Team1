@@ -20,4 +20,5 @@ res = StaticAnalyzer.analyze(
     rules=rules,
 )
 
+print("in main static result:")
 print(res.is_success(), res.message)
