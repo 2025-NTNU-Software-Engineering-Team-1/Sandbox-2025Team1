@@ -80,30 +80,6 @@ def fetch_testdata(problem_id: int):
     return resp.content
 
 
-# for static analysis
-def fetch_problem_rules(problem_id: int) -> dict:
-    """
-    Fetch static analysis rules.json from backend server
-    """
-
-    logger().debug(f"fetch problem rules [problem_id: {problem_id}]")
-    resp = rq.get(
-        f"{BACKEND_API}/problem/{problem_id}/rules",
-        params={
-            "token": SANDBOX_TOKEN,
-        },
-    )
-    try:
-        handle_problem_response(resp)
-        # suppose in "rules"
-        return resp.json()["rules"]
-    except ValueError:
-        logger().warning(f"Not found problem rules, [problem_id: {problem_id}]")
-        return None
-    except Exception as e:
-        logger().error(f"Error during fetch problem rules, [problem_id: {problem_id}]")
-        return None
-
 
 def get_checksum(problem_id: int) -> str:
     resp = rq.get(

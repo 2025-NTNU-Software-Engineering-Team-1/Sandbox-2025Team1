@@ -15,7 +15,7 @@ from .meta import Meta
 from .constant import Language
 from .utils import logger
 
-from .testdata import fetch_problem_rules
+from .pipeline import fetch_problem_rules
 
 from static_analysis import StaticAnalyzer, StaticAnalysisError
 
@@ -128,7 +128,7 @@ class Dispatcher(threading.Thread):
 
             if rules_json:
                 analysis_result = StaticAnalyzer.analyze(
-                    source_code_path=submission_path / "src",
+                    submission_id=submission_id,
                     language=submission_config.language,
                     rules=rules_json,
                 )
