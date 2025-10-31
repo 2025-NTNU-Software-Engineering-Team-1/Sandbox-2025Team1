@@ -17,7 +17,7 @@ from .utils import logger
 
 from .pipeline import fetch_problem_rules
 
-from static_analysis import StaticAnalyzer, StaticAnalysisError
+from .static_analysis import StaticAnalyzer, StaticAnalysisError
 
 
 class Dispatcher(threading.Thread):
@@ -137,7 +137,6 @@ class Dispatcher(threading.Thread):
                     # "Static Analysis Failed" (SAF)
                     # on_submission_complete
                     self.created_at[submission_id] = datetime.now()
-                    self.report_static_analysis_failure(submission_id, analysis_result)
                     return
             else:
                 logger().debug(
