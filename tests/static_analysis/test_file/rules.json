@@ -1,23 +1,35 @@
 {
-    "disallow_imports": [
-        "os",
-        "sys"
-    ],
-    "disallow_syntax": [
+    "model": "black",
+    "syntax": [
         "while",
         "for",
         "recursive"
     ],
-    "disallow_functions": [
-        "printf",
-        "scanf",
-        "malloc",
-        "free"
+    "imports": [
+        "os",
+        "sys"
     ],
-    "disallow_headers": [
+    "headers": [
         "stdio.h",
         "stdlib.h",
         "vector",
         "string"
+    ],
+    "functions": [
+        "printf",
+        "scanf",
+        "malloc",
+        "free",
+        "pop",
+        "push",
+        "top",
+        "append",
+        "insert",
+        "sort",
+        "reverse"
+    ],
+    "allow_url": [
+        "https://locaclhost:0000",
+        "https://google.com"
     ]
 }

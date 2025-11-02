@@ -7,18 +7,20 @@ from pathlib import Path
 from dispatcher.static_analysis import StaticAnalyzer
 from dispatcher.constant import Language
 
-submission_path = Path(
-    "/mnt/d/university/using/Normal-OJ-2025Team1/Sandbox/tests/static_analysis/test_file"
-)
-rules_path = Path(
-    "/mnt/d/university/using/Normal-OJ-2025Team1/Sandbox/tests/static_analysis/test_file/rules.json"
-)
+
+# /home/maxcho/Normal-OJ-2025Team1/Sandbox/tests/static_analysis
+submission_path = Path("./test_file")
+rules_path = Path("./test_file/rules.json")
 rules = json.loads(rules_path.read_text(encoding="utf-8"))
-res = StaticAnalyzer.analyze(
+analyzer_instance = StaticAnalyzer()
+res = analyzer_instance.analyze(
     submission_id=submission_path,
-    language=Language.PY,
+    language=Language.CPP,
     rules=rules,
 )
 
+
 print("in main static result:")
-print(res.is_success(), res.message)
+print("==================")
+print(res.message)
+print("==================")

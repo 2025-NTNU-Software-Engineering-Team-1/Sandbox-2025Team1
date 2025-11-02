@@ -124,19 +124,21 @@ class Dispatcher(threading.Thread):
 
         # [Strat] static analysis
         try:
-            rules_json = self.get_static_analysis_rules(problem_id)
+            logger().debug(f"Try to fetch problem rules. [problem_id: {problem_id}]")
+            rules_json = fetch_problem_rules(problem_id)
 
             if rules_json:
-                analysis_result = StaticAnalyzer.analyze(
+                analyzer_instance = StaticAnalyzer()
+                analysis_result = analyzer_instance.analyze(
                     submission_id=submission_id,
                     language=submission_config.language,
                     rules=rules_json,
                 )
 
                 if not analysis_result.is_success():
-                    # "Static Analysis Failed" (SAF)
-                    # on_submission_complete
-                    self.created_at[submission_id] = datetime.now()
+                    logger().warning(
+                        f"Static analysis failed: {analysis_result.message}"
+                    )
                     return
             else:
                 logger().debug(

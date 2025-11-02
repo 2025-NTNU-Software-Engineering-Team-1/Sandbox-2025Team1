@@ -1,6 +1,7 @@
 import subprocess, shlex
 import pathlib
 import ast
+import json
 
 try:
     import clang.cindex  # type: ignore
@@ -25,7 +26,9 @@ def detect_include_args():
 
     # try these path
     args += ["-I/usr/include", "-I/usr/include/x86_64-linux-gnu"]
-    print(args)
+
+    # for debug
+    # print(args)
     return args
 
 
@@ -42,17 +45,92 @@ class AnalysisResult:
     write analysis report
     """
 
-    def __init__(self, success=True, message="OK"):
+    def __init__(self, success=True, message=""):
         self._success = success
         self.message = message
 
     def is_success(self):
         return self._success
 
+    def good_look_output_rules(self, rules: dict):
+        if not rules:
+            rules_str = "No rules applied."
+            return rules_str
+        rules_items = []
+        max_key_len = max(len(key) for key in rules.keys()) + 1
+        for key, value in rules.items():
+            if isinstance(value, list):
+                value_str = self._format_list_value(key, value, max_key_len)
+            else:
+                value_str = self._format_scalar_value(value)
+            rules_items.append(f"  {key.ljust(max_key_len)}: {value_str}")
+
+        rules_str = "\n".join(rules_items)
+        self.message += f"\n------------------------------ Applied Rules ------------------------------"
+        self.message += f"\n{rules_str}\n"
+        # self.message += f"\n---------------------------------------------------------------------------"
+
+        return rules_str
+
+    def good_look_output_facts(self, facts: dict):
+        facts_items = []
+        max_key_len = max(len(key) for key in facts.keys()) + 1
+
+        for key, value in facts.items():
+            if isinstance(value, (list, set)):
+                value_str = self._format_list_value(key, value, max_key_len)
+            else:
+                value_str = self._format_scalar_value(value)
+            facts_items.append(f"  {key.ljust(max_key_len)}: {value_str}")
+        facts_str = "\n".join(facts_items)
+        self.message += f"\n----------------------------- Collected Facts -----------------------------"
+        self.message += f"\n{facts_str}"
+        self.message += f"\n---------------------------------------------------------------------------"
+
+    def good_look_output_violations(self, violations: dict):
+        violations_items = []
+        max_key_len = max(len(key) for key in violations.keys()) + 1
+
+        for key, value in violations.items():
+            value_str = self._format_list_value(key, value, max_key_len)
+            violations_items.append(f"  {key.ljust(max_key_len)}: {value_str}")
+
+        violations_str = "\n".join(violations_items)
+
+        self.message += f"\n-------------------------- Static Analysis Failed -------------------------"
+        self.message += f"\n{violations_str}\n"
+        # self.message += f"\n---------------------------------------------------------------------------"
+
+    def _format_scalar_value(self, value) -> str:
+        if value == "black":
+            return "Disallow"
+        if value == "white":
+            return "Only Allow"
+        return str(value)
+
+    def _format_list_value(self, key: str, value_list: list, max_key_len: int) -> str:
+        if not value_list:
+            return "(empty)"
+        value_list = sorted(value_list)
+        str_values = [str(v) for v in value_list]
+        chunk_size = 5
+        if len(str_values) <= chunk_size:
+            return ", ".join(str_values)
+        chunks = [
+            str_values[i : i + chunk_size]
+            for i in range(0, len(str_values), chunk_size)
+        ]
+        joined_chunks = [", ".join(chunk) for chunk in chunks]
+        line_indent = " " * (2 + max_key_len + 2)
+        return f"\n{line_indent}".join(joined_chunks)
+
 
 class StaticAnalyzer:
-    @staticmethod
+    def __init__(self):
+        self.result = AnalysisResult()
+
     def analyze(
+        self,
         submission_id: str,
         language: Language,
         rules: dict = None,
@@ -68,26 +146,27 @@ class StaticAnalyzer:
         # source_code_path = (working_dir / submission_id / "src").resolve()
 
         logger().debug(f"Analysis: {source_code_path} (lang: {language})")
-
         if not isinstance(rules, dict):
             rules = {}
-
         try:
+            self.result.good_look_output_rules(rules)
+
             if language == Language.PY:
-                result = StaticAnalyzer._analyze_python(source_code_path, rules)
+                self._analyze_python(source_code_path, rules)
 
             elif language == Language.C or language == Language.CPP:
                 if "clang" not in globals():
                     raise StaticAnalysisError(
                         "Libclang is not installed or import failed"
                     )
-                result = StaticAnalyzer._analyze_c_cpp(
-                    source_code_path, rules, language
-                )
+                self._analyze_c_cpp(source_code_path, rules, language)
 
             else:
                 logger().warning(f"Unsupported static analysis languages: {language}")
-                result = AnalysisResult(success=True)  # default false
+                self.result._success = False
+                self.result.message += (
+                    f"\nUnsupported static analysis languages: {language}"
+                )
 
         except StaticAnalysisError:
             logger().error(f"Static Analyzer inner error", exc_info=True)
@@ -100,13 +179,12 @@ class StaticAnalyzer:
             )
             raise StaticAnalysisError(f"An unexpected error occurred: {e}") from e
 
-        if result.is_success():
+        if self.result.is_success():
             logger().debug("Static analysis passed.")
 
-        return result
+        return self.result
 
-    @staticmethod
-    def _analyze_python(source_path: pathlib.Path, rules: dict):
+    def _analyze_python(self, source_path: pathlib.Path, rules: dict):
         """
         for python use ast
         """
@@ -126,56 +204,32 @@ class StaticAnalyzer:
             visitor.visit(tree)
             facts = visitor.facts
         except SyntaxError as e:
-            return AnalysisResult(
-                success=False, message=f"Syntax Error could not analyze: {e}"
-            )
+            self.result._success = False
+            self.result.message += f"\nSyntax Error could not analyze:\n{e}"
+            return self.result
 
         logger().debug(f"Python analysis facts: {facts}")
+        # for debug
+        # print(facts)
 
         # (2) fact vs rules
-        violations = []
-
-        # Check 1: Imports
-        disallowed_imports = set(rules.get("disallow_imports", []))
-        used_disallowed_imports = facts["imports"].intersection(disallowed_imports)
-        if used_disallowed_imports:
-            violations.append(
-                f"\n[Violation] Using the forbidden method: {', '.join(used_disallowed_imports)}"
-            )
-
-        # Check 2: for and while loop
-        disallowed_syntax = set(rules.get("disallow_syntax", []))
-
-        if "for" in disallowed_syntax:
-            for line_num in facts["for_loops"]:
-                violations.append(f"\n[Violation] For Loop, line {line_num}")
-        if "while" in disallowed_syntax:
-            for line_num in facts["while_loops"]:
-                violations.append(f"\n[Violation] While Loop, line {line_num}")
-        if "recursive" in disallowed_syntax:
-            for line_num in facts["recursive_calls"]:
-                violations.append(f"\n[Violation] Recursive Call, line {line_num}")
-
-        # Check 3: function call
-        disallowed_functions = set(rules.get("disallow_functions", []))
-        used_disallowed_functions = facts["function_calls"].intersection(
-            disallowed_functions
-        )
-        if used_disallowed_functions:
-            violations.append(
-                f"\n[Violation] Using the forbidden method: {', '.join(used_disallowed_functions)}"
-            )
+        violations = self.get_violations(facts, rules, Language.PY)
 
         # (3) Result
         if violations:
-            msg = f"Static analysis failed:{'; '.join(violations)}"
-            logger().warning(msg)
-            return AnalysisResult(success=False, message=msg)
+            logger().debug("Static analysis failed.")
+            self.result._success = False
+            self.result.good_look_output_violations(violations)
+        else:
+            self.result._success = True
+            self.result.message += f"\nGOOD JOB, passed static analysis."
 
-        return AnalysisResult(success=True)
+        self.result.good_look_output_facts(facts)
+        return self.result
 
-    @staticmethod
-    def _analyze_c_cpp(source_path: pathlib.Path, rules: dict, language: Language):
+    def _analyze_c_cpp(
+        self, source_path: pathlib.Path, rules: dict, language: Language
+    ):
         """
         for C/C++ use libclang
         """
@@ -216,10 +270,9 @@ class StaticAnalyzer:
             raise StaticAnalysisError(f"Libclang init failed: {e}")
 
         if not translation_unit:
-            return AnalysisResult(
-                success=False,
-                message="[Syntax Error] Clang could not analyze",
-            )
+            self.result._success = False
+            self.result.message += "[Syntax Error] Clang could not analyze"
+            return self.result
 
         facts = {
             "headers": set(),
@@ -229,54 +282,94 @@ class StaticAnalyzer:
             "recursive_calls": [],
         }
         analyze_c_ast(translation_unit.cursor, facts, None, str(target_path))
-
-        # for debug
-        print(facts)
-
         logger().debug(f"C/C++ analysis facts: {facts}")
-
+        # for debug
+        # print(facts)
         # (2) fact vs rules
-        violations = []
-
-        # Check 1: header (.h)
-        disallowed_headers = set(rules.get("disallow_headers", []))
-        used_disallowed_headers = facts["headers"].intersection(disallowed_headers)
-        if used_disallowed_headers:
-            violations.append(
-                # f"[Violation] Using the forbidden method: {', '.join(used_disallowed_headers)}"
-                f"\n[Violation] Used Disallowed Headers: {', '.join(used_disallowed_headers)}"
-            )
-
-        # Check 2: for and while loop
-        disallowed_syntax = set(rules.get("disallow_syntax", []))
-        if "for" in disallowed_syntax:
-            for line_num in facts["for_loops"]:
-                violations.append(f"\n[Violation] For Loop, line {line_num}")
-        if "while" in disallowed_syntax:
-            for line_num in facts["while_loops"]:
-                violations.append(f"\n[Violation] While Loop, line {line_num}")
-        if "recursive" in disallowed_syntax:
-            for line_num in facts["recursive_calls"]:
-                violations.append(f"\n[Violation] Recursive Call, line {line_num}")
-
-        # Check 3: function call
-        disallowed_functions = set(rules.get("disallow_functions", []))
-        used_disallowed_functions = facts["function_calls"].intersection(
-            disallowed_functions
-        )
-        if used_disallowed_functions:
-            violations.append(
-                # f"[Violation] Using the forbidden method: {', '.join(used_disallowed_functions)}"
-                f"\n[Violation] Used Disallowed Functions: {', '.join(used_disallowed_functions)}"
-            )
+        violations = self.get_violations(facts, rules, language)
 
         # (3) Result
         if violations:
-            msg = f"Static analysis failed:{'; '.join(violations)}"
-            logger().warning(msg)
-            return AnalysisResult(success=False, message=msg)
+            logger().debug("Static analysis failed.")
+            self.result._success = False
+            self.result.good_look_output_violations(violations)
+        else:
+            self.result._success = True
+            self.result.message += f"\nGOOD JOB, passed static analysis."
 
-        return AnalysisResult(success=True)
+        self.result.good_look_output_facts(facts)
+        return self.result
+
+    def get_violations(self, facts: dict, rules: dict, language: Language) -> dict:
+        violations_dict = {}
+        model = rules.get("model", "black")
+
+        if language == Language.PY:
+            list_violation = self._check_list_violations(
+                facts["imports"], rules.get("imports", []), model, "Imports"
+            )
+            if list_violation:
+                violations_dict[list_violation[0]] = list_violation[1]
+        else:
+            list_violation = self._check_list_violations(
+                facts["headers"], rules.get("headers", []), model, "Headers"
+            )
+            if list_violation:
+                violations_dict[list_violation[0]] = list_violation[1]
+
+        syntax_violations_list = self._check_syntax_violations(
+            facts, rules.get("syntax", []), model
+        )
+        for key, lines in syntax_violations_list:
+            violations_dict[key] = lines
+
+        list_violation = self._check_list_violations(
+            facts["function_calls"], rules.get("functions", []), model, "Functions"
+        )
+        if list_violation:
+            violations_dict[list_violation[0]] = list_violation[1]
+
+        return violations_dict
+
+    def _check_list_violations(
+        self, used_items: set, rule_items: list, model: str, item_type: str
+    ) -> tuple | None:
+        rule_set = set(rule_items)
+
+        if model == "black":
+            violations_found = used_items.intersection(rule_set)
+            if violations_found:
+                return (f"Disallowed {item_type}", sorted(list(violations_found)))
+        elif model == "white":
+            violations_found = used_items.difference(rule_set)
+            if violations_found:
+                return (f"Non-whitelisted {item_type}", sorted(list(violations_found)))
+
+        return None
+
+    def _check_syntax_violations(
+        self, facts: dict, rule_syntax: list, model: str
+    ) -> list:
+        violations_data = []
+        rule_set = set(rule_syntax)
+        syntax_checks = {
+            "for": ("for_loops", "For Loop"),
+            "while": ("while_loops", "While Loop"),
+            "recursive": ("recursive_calls", "Recursive Call"),
+        }
+        for syntax_key, (fact_key, message) in syntax_checks.items():
+            lines = facts.get(fact_key, [])
+            if not lines:
+                continue
+            if model == "black":
+                if syntax_key in rule_set:
+                    violations_data.append((f"Disallowed {message}", lines))
+
+            elif model == "white":
+                if syntax_key not in rule_set:
+                    violations_data.append((f"Non-whitelisted {message}", lines))
+
+        return violations_data
 
 
 class PythonAstVisitor(ast.NodeVisitor):
@@ -287,84 +380,62 @@ class PythonAstVisitor(ast.NodeVisitor):
     def __init__(self):
         # log used "fact"
         self.facts = {
-            "imports": set(),  # log moudle name
-            "function_calls": set(),  # log func. name
-            "for_loops": [],  # log line number
-            "while_loops": [],  # log line number
-            "recursive_calls": [],  # log line number
+            "imports": set(),
+            "function_calls": set(),
+            "for_loops": [],
+            "while_loops": [],
+            "recursive_calls": [],
         }
 
-        # use stack to trace recursive
+        # for recursive check
         self.current_function_stack = []
 
     def visit_Import(self, node):
-        """
-        when import ...
-        """
         for alias in node.names:
             self.facts["imports"].add(alias.name)
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node):
-        """
-        when from ... import ...
-        """
         if node.module:
             self.facts["imports"].add(node.module)
         self.generic_visit(node)
 
     def visit_For(self, node):
-        """
-        when for loop ...
-        """
         self.facts["for_loops"].append(node.lineno)
         self.generic_visit(node)
 
     def visit_While(self, node):
-        """
-        when while loop ...
-        """
         self.facts["while_loops"].append(node.lineno)
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node):
-        """
-        whlie visit func. define
-        ex: def dfs():
-        """
         current_function_name = node.name
         self.current_function_stack.append(current_function_name)
         self.generic_visit(node)
         self.current_function_stack.pop()
 
     def visit_Call(self, node):
-        """
-        whem func. call
-        ex: dfs()
-        """
         function_name_called = None
-
         if isinstance(node.func, ast.Name):
             function_name_called = node.func.id
+            self.facts["function_calls"].add(function_name_called)
+        elif isinstance(node.func, ast.Attribute):
+            function_name_called = node.func.attr
             self.facts["function_calls"].add(function_name_called)
         if (
             self.current_function_stack
             and function_name_called == self.current_function_stack[-1]
         ):
-            # Is recursive
-            # log line number
             self.facts["recursive_calls"].append(node.lineno)
 
         self.generic_visit(node)
 
 
 def analyze_c_ast(node, facts, current_func_cursor, main_file_path: str):
-    # 1) include
     if node.kind == clang.cindex.CursorKind.INCLUSION_DIRECTIVE:
         if node.location.file and node.location.file.name == main_file_path:
             facts["headers"].add(node.displayname)
         return
-
     in_main = (
         node.location
         and node.location.file
