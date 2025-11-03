@@ -17,7 +17,7 @@ def fact(n: int) -> int:
 
 
 # ====== 兩種手刻排序：for / while 都會出現 ======
-def bubble_sort(a: List[int]) -> None:
+def sort(a: List[int]) -> None:
     n = len(a)
     for i in range(n - 1):  # for 檢查點
         j = 0
@@ -93,15 +93,15 @@ def main() -> None:
     v = [7, 1, 5, 9, 3, 8, 2, 6, 4, 0]
     v.append(10)  # push_back
     v.pop()  # pop_back
-    bubble_sort(v)
+    sort(v)
     insertion_sort(v)
 
     # ---- 2) 內建與「近似對位」演算法：sort / stable / partial / nth ----
     a = list(range(10))
     a.reverse()  # 9..0
 
-    a.sort()  # sort（Timsort，穩定）
-    a.sort()  # stable_sort 等價再呼叫一次，保留穩定性測點
+    # a.sort()  # sort（Timsort，穩定）
+    # a.sort()  # stable_sort 等價再呼叫一次，保留穩定性測點
 
     # partial_sort: 取前 5 小（heapq.nsmallest 不改原地，作為“部份排序”測點）
     top5 = heapq.nsmallest(5, a)

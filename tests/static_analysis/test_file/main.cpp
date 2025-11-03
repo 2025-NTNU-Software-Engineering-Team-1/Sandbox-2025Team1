@@ -23,7 +23,7 @@ static long long fact (int n) {
 }
 
 // ====== 兩種手刻排序：for / while 都會出現 ======
-static void bubble_sort (std::vector<int> &a) {
+static void sort (std::vector<int> &a) {
     const std::size_t n = a.size ();
     for (std::size_t i = 0; i + 1 < n; ++i) {           // for 檢查點
         std::size_t j = 0;
@@ -69,7 +69,7 @@ int main () {
     std::vector<int> v = {7,1,5,9,3,8,2,6,4,0};
     v.push_back (10);           // push_back
     v.pop_back ();              // pop_back
-    bubble_sort (v);
+    sort (v);
     insertion_sort (v);
 
     // ---- 2) 標準演算法：sort / stable_sort / partial_sort / nth_element ----
@@ -77,7 +77,7 @@ int main () {
     std::iota (a.begin () , a.end () , 0);     // 0..9
     std::reverse (a.begin () , a.end ());     // 9..0
 
-    std::sort (a.begin () , a.end ());        // sort
+    // std::sort (a.begin () , a.end ());        // sort
     std::stable_sort (a.begin () , a.end ()); // stable_sort（此例排序鍵相同效果等同，但可測呼叫）
     std::partial_sort (a.begin () , a.begin () + 5 , a.end ()); // 部分排序
     std::nth_element (a.begin () , a.begin () + 3 , a.end ());  // 第3順位元素就定位

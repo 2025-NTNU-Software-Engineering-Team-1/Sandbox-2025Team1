@@ -45,9 +45,12 @@ class AnalysisResult:
     write analysis report
     """
 
-    def __init__(self, success=True, message=""):
+    def __init__(self, success=True, message="", rules="", facts="", violations=""):
         self._success = success
         self.message = message
+        self.rules = rules
+        self.facts = facts
+        self.violations = violations
 
     def is_success(self):
         return self._success
@@ -66,9 +69,9 @@ class AnalysisResult:
             rules_items.append(f"  {key.ljust(max_key_len)}: {value_str}")
 
         rules_str = "\n".join(rules_items)
-        self.message += f"\n------------------------------ Applied Rules ------------------------------"
-        self.message += f"\n{rules_str}\n"
-        # self.message += f"\n---------------------------------------------------------------------------"
+        self.rules += f"\n------------------------------ Applied Rules ------------------------------"
+        self.rules += f"\n{rules_str}\n"
+        # self.rules += f"\n---------------------------------------------------------------------------"
 
         return rules_str
 
@@ -83,9 +86,9 @@ class AnalysisResult:
                 value_str = self._format_scalar_value(value)
             facts_items.append(f"  {key.ljust(max_key_len)}: {value_str}")
         facts_str = "\n".join(facts_items)
-        self.message += f"\n----------------------------- Collected Facts -----------------------------"
-        self.message += f"\n{facts_str}"
-        self.message += f"\n---------------------------------------------------------------------------"
+        self.facts += f"\n----------------------------- Collected Facts -----------------------------"
+        self.facts += f"\n{facts_str}"
+        # self.facts += f"\n---------------------------------------------------------------------------"
 
     def good_look_output_violations(self, violations: dict):
         violations_items = []
@@ -97,9 +100,9 @@ class AnalysisResult:
 
         violations_str = "\n".join(violations_items)
 
-        self.message += f"\n-------------------------- Static Analysis Failed -------------------------"
-        self.message += f"\n{violations_str}\n"
-        # self.message += f"\n---------------------------------------------------------------------------"
+        self.violations += f"\n-------------------------- Static Analysis Failed -------------------------"
+        self.violations += f"\n{violations_str}\n"
+        # self.violations += f"\n---------------------------------------------------------------------------"
 
     def _format_scalar_value(self, value) -> str:
         if value == "black":
@@ -150,7 +153,6 @@ class StaticAnalyzer:
             rules = {}
         try:
             self.result.good_look_output_rules(rules)
-
             if language == Language.PY:
                 self._analyze_python(source_code_path, rules)
 
@@ -193,28 +195,27 @@ class StaticAnalyzer:
             raise StaticAnalysisError(
                 f"Not found 'main.py'. Source path: {source_path}"
             )
-
         with open(main_py_path, "r") as f:
             content = f.read()
 
         # (1) Ast + facts result
         try:
             tree = ast.parse(content)
-            visitor = PythonAstVisitor()
+            def_visitor = FunctionDefVisitor()
+            def_visitor.visit(tree)
+            user_defined_functions = def_visitor.defined_functions
+            visitor = PythonAstVisitor(user_defined_functions=user_defined_functions)
             visitor.visit(tree)
             facts = visitor.facts
         except SyntaxError as e:
             self.result._success = False
             self.result.message += f"\nSyntax Error could not analyze:\n{e}"
             return self.result
-
         logger().debug(f"Python analysis facts: {facts}")
         # for debug
         # print(facts)
-
         # (2) fact vs rules
         violations = self.get_violations(facts, rules, Language.PY)
-
         # (3) Result
         if violations:
             logger().debug("Static analysis failed.")
@@ -372,12 +373,21 @@ class StaticAnalyzer:
         return violations_data
 
 
+class FunctionDefVisitor(ast.NodeVisitor):
+    def __init__(self):
+        self.defined_functions = set()
+
+    def visit_FunctionDef(self, node):
+        self.defined_functions.add(node.name)
+        self.generic_visit(node)
+
+
 class PythonAstVisitor(ast.NodeVisitor):
     """
     for python analyze
     """
 
-    def __init__(self):
+    def __init__(self, user_defined_functions: set):
         # log used "fact"
         self.facts = {
             "imports": set(),
@@ -389,6 +399,7 @@ class PythonAstVisitor(ast.NodeVisitor):
 
         # for recursive check
         self.current_function_stack = []
+        self.user_defined_functions = user_defined_functions
 
     def visit_Import(self, node):
         for alias in node.names:
@@ -416,18 +427,23 @@ class PythonAstVisitor(ast.NodeVisitor):
 
     def visit_Call(self, node):
         function_name_called = None
+        is_user_defined = False
+
         if isinstance(node.func, ast.Name):
             function_name_called = node.func.id
-            self.facts["function_calls"].add(function_name_called)
+            if function_name_called in self.user_defined_functions:
+                is_user_defined = True
         elif isinstance(node.func, ast.Attribute):
             function_name_called = node.func.attr
+
+        if function_name_called and not is_user_defined:
             self.facts["function_calls"].add(function_name_called)
+
         if (
             self.current_function_stack
             and function_name_called == self.current_function_stack[-1]
         ):
             self.facts["recursive_calls"].append(node.lineno)
-
         self.generic_visit(node)
 
 
@@ -454,12 +470,17 @@ def analyze_c_ast(node, facts, current_func_cursor, main_file_path: str):
 
         elif node.kind == clang.cindex.CursorKind.CALL_EXPR:
             callee = node.referenced
-            if callee and callee.spelling:
-                facts["function_calls"].add(callee.spelling)
-            else:
-                name = node.spelling or node.displayname
-                if name:
-                    facts["function_calls"].add(name)
+            is_user_defined_in_main = False
+            if callee and callee.location and callee.location.file:
+                is_user_defined_in_main = callee.location.file.name == main_file_path
+
+            if not is_user_defined_in_main:
+                if callee and callee.spelling:
+                    facts["function_calls"].add(callee.spelling)
+                else:
+                    name = node.spelling or node.displayname
+                    if name:
+                        facts["function_calls"].add(name)
 
             if (
                 current_func_cursor is not None

@@ -13,14 +13,17 @@ submission_path = Path("./test_file")
 rules_path = Path("./test_file/rules.json")
 rules = json.loads(rules_path.read_text(encoding="utf-8"))
 analyzer_instance = StaticAnalyzer()
-res = analyzer_instance.analyze(
+analysis_result = analyzer_instance.analyze(
     submission_id=submission_path,
-    language=Language.CPP,
+    language=Language.PY,
     rules=rules,
 )
 
 
-print("in main static result:")
+print("in dispatcher static result:")
 print("==================")
-print(res.message)
+print(analysis_result.message)
+print(analysis_result.rules)
+print(analysis_result.facts)
+print(analysis_result.violations)
 print("==================")
