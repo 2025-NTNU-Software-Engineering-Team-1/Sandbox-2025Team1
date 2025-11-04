@@ -16,4 +16,3 @@ sandbox-testdata/
 
 sandbox
 .pytest_cache/
-.config/submission.json
