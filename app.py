@@ -58,23 +58,19 @@ def submit(submission_id: str):
         DISPATCHER.handle(submission_id, problem_id)
     except queue.Full:
         return (
-            jsonify(
-                {
-                    "status": "err",
-                    "msg": "task queue is full now.\n"
-                    "please wait a moment and re-send the submission.",
-                    "data": None,
-                }
-            ),
+            jsonify({
+                "status": "err",
+                "msg": "task queue is full now.\n"
+                "please wait a moment and re-send the submission.",
+                "data": None,
+            }),
             500,
         )
-    return jsonify(
-        {
-            "status": "ok",
-            "msg": "ok",
-            "data": "ok",
-        }
-    )
+    return jsonify({
+        "status": "ok",
+        "msg": "ok",
+        "data": "ok",
+    })
 
 
 @app.get("/status")
@@ -84,14 +80,12 @@ def status():
     }
     # if token is provided
     if secrets.compare_digest(SANDBOX_TOKEN, request.args.get("token", "")):
-        ret.update(
-            {
-                "queueSize": DISPATCHER.queue.qsize(),
-                "maxTaskCount": DISPATCHER.MAX_TASK_COUNT,
-                "containerCount": DISPATCHER.container_count,
-                "maxContainerCount": DISPATCHER.MAX_TASK_COUNT,
-                "submissions": [*DISPATCHER.result.keys()],
-                "running": DISPATCHER.do_run,
-            }
-        )
+        ret.update({
+            "queueSize": DISPATCHER.queue.qsize(),
+            "maxTaskCount": DISPATCHER.MAX_TASK_COUNT,
+            "containerCount": DISPATCHER.container_count,
+            "maxContainerCount": DISPATCHER.MAX_TASK_COUNT,
+            "submissions": [*DISPATCHER.result.keys()],
+            "running": DISPATCHER.do_run,
+        })
     return jsonify(ret), 200

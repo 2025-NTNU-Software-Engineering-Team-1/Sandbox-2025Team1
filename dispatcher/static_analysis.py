@@ -15,13 +15,13 @@ from .utils import logger
 def detect_include_args():
     args = []
 
-    rdir = subprocess.check_output(["clang", "-print-resource-dir"], text=True).strip()
+    rdir = subprocess.check_output(["clang", "-print-resource-dir"],
+                                   text=True).strip()
     args += [f"-I{pathlib.Path(rdir) / 'include'}"]
 
     # libstdc++ path (auto)
-    cxx_inc = subprocess.check_output(
-        ["g++", "-print-file-name=include"], text=True
-    ).strip()
+    cxx_inc = subprocess.check_output(["g++", "-print-file-name=include"],
+                                      text=True).strip()
     args += [f"-I{cxx_inc}"]
 
     # try these path
@@ -45,7 +45,12 @@ class AnalysisResult:
     write analysis report
     """
 
-    def __init__(self, success=True, message="", rules="", facts="", violations=""):
+    def __init__(self,
+                 success=True,
+                 message="",
+                 rules="",
+                 facts="",
+                 violations=""):
         self._success = success
         self.message = message
         self.rules = rules
@@ -111,7 +116,8 @@ class AnalysisResult:
             return "Only Allow"
         return str(value)
 
-    def _format_list_value(self, key: str, value_list: list, max_key_len: int) -> str:
+    def _format_list_value(self, key: str, value_list: list,
+                           max_key_len: int) -> str:
         if not value_list:
             return "(empty)"
         value_list = sorted(value_list)
@@ -120,7 +126,7 @@ class AnalysisResult:
         if len(str_values) <= chunk_size:
             return ", ".join(str_values)
         chunks = [
-            str_values[i : i + chunk_size]
+            str_values[i:i + chunk_size]
             for i in range(0, len(str_values), chunk_size)
         ]
         joined_chunks = [", ".join(chunk) for chunk in chunks]
@@ -129,6 +135,7 @@ class AnalysisResult:
 
 
 class StaticAnalyzer:
+
     def __init__(self):
         self.result = AnalysisResult()
 
@@ -159,16 +166,15 @@ class StaticAnalyzer:
             elif language == Language.C or language == Language.CPP:
                 if "clang" not in globals():
                     raise StaticAnalysisError(
-                        "Libclang is not installed or import failed"
-                    )
+                        "Libclang is not installed or import failed")
                 self._analyze_c_cpp(source_code_path, rules, language)
 
             else:
-                logger().warning(f"Unsupported static analysis languages: {language}")
+                logger().warning(
+                    f"Unsupported static analysis languages: {language}")
                 self.result._success = False
                 self.result.message += (
-                    f"\nUnsupported static analysis languages: {language}"
-                )
+                    f"\nUnsupported static analysis languages: {language}")
 
         except StaticAnalysisError:
             logger().error(f"Static Analyzer inner error", exc_info=True)
@@ -179,7 +185,8 @@ class StaticAnalyzer:
                 f"An unexpected error occurred during static analysis: {e}",
                 exc_info=True,
             )
-            raise StaticAnalysisError(f"An unexpected error occurred: {e}") from e
+            raise StaticAnalysisError(
+                f"An unexpected error occurred: {e}") from e
 
         if self.result.is_success():
             logger().debug("Static analysis passed.")
@@ -193,8 +200,7 @@ class StaticAnalyzer:
         main_py_path = source_path / "main.py"
         if not main_py_path.exists():
             raise StaticAnalysisError(
-                f"Not found 'main.py'. Source path: {source_path}"
-            )
+                f"Not found 'main.py'. Source path: {source_path}")
         with open(main_py_path, "r") as f:
             content = f.read()
 
@@ -204,7 +210,8 @@ class StaticAnalyzer:
             def_visitor = FunctionDefVisitor()
             def_visitor.visit(tree)
             user_defined_functions = def_visitor.defined_functions
-            visitor = PythonAstVisitor(user_defined_functions=user_defined_functions)
+            visitor = PythonAstVisitor(
+                user_defined_functions=user_defined_functions)
             visitor.visit(tree)
             facts = visitor.facts
         except SyntaxError as e:
@@ -228,9 +235,8 @@ class StaticAnalyzer:
         self.result.good_look_output_facts(facts)
         return self.result
 
-    def _analyze_c_cpp(
-        self, source_path: pathlib.Path, rules: dict, language: Language
-    ):
+    def _analyze_c_cpp(self, source_path: pathlib.Path, rules: dict,
+                       language: Language):
         """
         for C/C++ use libclang
         """
@@ -264,7 +270,8 @@ class StaticAnalyzer:
             translation_unit = index.parse(
                 str(target_path),
                 args=lang_args + detect_include_args(),
-                options=clang.cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
+                options=clang.cindex.TranslationUnit.
+                PARSE_DETAILED_PROCESSING_RECORD,
             )
 
         except clang.cindex.LibclangError as e:
@@ -301,56 +308,54 @@ class StaticAnalyzer:
         self.result.good_look_output_facts(facts)
         return self.result
 
-    def get_violations(self, facts: dict, rules: dict, language: Language) -> dict:
+    def get_violations(self, facts: dict, rules: dict,
+                       language: Language) -> dict:
         violations_dict = {}
         model = rules.get("model", "black")
 
         if language == Language.PY:
             list_violation = self._check_list_violations(
-                facts["imports"], rules.get("imports", []), model, "Imports"
-            )
+                facts["imports"], rules.get("imports", []), model, "Imports")
             if list_violation:
                 violations_dict[list_violation[0]] = list_violation[1]
         else:
             list_violation = self._check_list_violations(
-                facts["headers"], rules.get("headers", []), model, "Headers"
-            )
+                facts["headers"], rules.get("headers", []), model, "Headers")
             if list_violation:
                 violations_dict[list_violation[0]] = list_violation[1]
 
         syntax_violations_list = self._check_syntax_violations(
-            facts, rules.get("syntax", []), model
-        )
+            facts, rules.get("syntax", []), model)
         for key, lines in syntax_violations_list:
             violations_dict[key] = lines
 
         list_violation = self._check_list_violations(
-            facts["function_calls"], rules.get("functions", []), model, "Functions"
-        )
+            facts["function_calls"], rules.get("functions", []), model,
+            "Functions")
         if list_violation:
             violations_dict[list_violation[0]] = list_violation[1]
 
         return violations_dict
 
-    def _check_list_violations(
-        self, used_items: set, rule_items: list, model: str, item_type: str
-    ) -> tuple | None:
+    def _check_list_violations(self, used_items: set, rule_items: list,
+                               model: str, item_type: str) -> tuple | None:
         rule_set = set(rule_items)
 
         if model == "black":
             violations_found = used_items.intersection(rule_set)
             if violations_found:
-                return (f"Disallowed {item_type}", sorted(list(violations_found)))
+                return (f"Disallowed {item_type}",
+                        sorted(list(violations_found)))
         elif model == "white":
             violations_found = used_items.difference(rule_set)
             if violations_found:
-                return (f"Non-whitelisted {item_type}", sorted(list(violations_found)))
+                return (f"Non-whitelisted {item_type}",
+                        sorted(list(violations_found)))
 
         return None
 
-    def _check_syntax_violations(
-        self, facts: dict, rule_syntax: list, model: str
-    ) -> list:
+    def _check_syntax_violations(self, facts: dict, rule_syntax: list,
+                                 model: str) -> list:
         violations_data = []
         rule_set = set(rule_syntax)
         syntax_checks = {
@@ -368,12 +373,14 @@ class StaticAnalyzer:
 
             elif model == "white":
                 if syntax_key not in rule_set:
-                    violations_data.append((f"Non-whitelisted {message}", lines))
+                    violations_data.append(
+                        (f"Non-whitelisted {message}", lines))
 
         return violations_data
 
 
 class FunctionDefVisitor(ast.NodeVisitor):
+
     def __init__(self):
         self.defined_functions = set()
 
@@ -439,10 +446,8 @@ class PythonAstVisitor(ast.NodeVisitor):
         if function_name_called and not is_user_defined:
             self.facts["function_calls"].add(function_name_called)
 
-        if (
-            self.current_function_stack
-            and function_name_called == self.current_function_stack[-1]
-        ):
+        if (self.current_function_stack
+                and function_name_called == self.current_function_stack[-1]):
             self.facts["recursive_calls"].append(node.lineno)
         self.generic_visit(node)
 
@@ -452,16 +457,13 @@ def analyze_c_ast(node, facts, current_func_cursor, main_file_path: str):
         if node.location.file and node.location.file.name == main_file_path:
             facts["headers"].add(node.displayname)
         return
-    in_main = (
-        node.location
-        and node.location.file
-        and node.location.file.name == main_file_path
-    )
+    in_main = (node.location and node.location.file
+               and node.location.file.name == main_file_path)
 
     if in_main:
         if node.kind in (
-            clang.cindex.CursorKind.FOR_STMT,
-            clang.cindex.CursorKind.CXX_FOR_RANGE_STMT,
+                clang.cindex.CursorKind.FOR_STMT,
+                clang.cindex.CursorKind.CXX_FOR_RANGE_STMT,
         ):
             facts["for_loops"].append(node.location.line)
 
@@ -482,13 +484,9 @@ def analyze_c_ast(node, facts, current_func_cursor, main_file_path: str):
                     if name:
                         facts["function_calls"].add(name)
 
-            if (
-                current_func_cursor is not None
-                and callee is not None
-                and callee.get_usr()
-                and current_func_cursor.get_usr()
-                and callee.get_usr() == current_func_cursor.get_usr()
-            ):
+            if (current_func_cursor is not None and callee is not None
+                    and callee.get_usr() and current_func_cursor.get_usr()
+                    and callee.get_usr() == current_func_cursor.get_usr()):
                 facts["recursive_calls"].append(node.location.line)
 
     if node.kind == clang.cindex.CursorKind.FUNCTION_DECL:

@@ -30,7 +30,8 @@ class Dispatcher(threading.Thread):
         super().__init__()
         self.testing = False
         # read config
-        queue_limit, container_limit = config.get_dispatcher_limits(dispatcher_config)
+        queue_limit, container_limit = config.get_dispatcher_limits(
+            dispatcher_config)
         # flag to decided whether the thread should run
         self.do_run = True
         # submission location
@@ -95,7 +96,8 @@ class Dispatcher(threading.Thread):
             create()
         except FileExistsError:
             # no found or time out, retry
-            if not self.contains(submission_id) or self.is_timed_out(submission_id):
+            if not self.contains(submission_id) or self.is_timed_out(
+                    submission_id):
                 self.release(submission_id)
                 shutil.rmtree(root_dir / submission_id)
                 create()
@@ -106,25 +108,27 @@ class Dispatcher(threading.Thread):
         """
         handle a submission, save its config and push into task queue
         """
-        logger().info(f"receive submission {submission_id} for problem: {problem_id}.")
+        logger().info(
+            f"receive submission {submission_id} for problem: {problem_id}.")
         submission_path = self.SUBMISSION_DIR / submission_id
         # check whether the submission directory exist
         if not submission_path.exists():
-            raise FileNotFoundError(f"submission id: {submission_id} file not found.")
+            raise FileNotFoundError(
+                f"submission id: {submission_id} file not found.")
         elif not submission_path.is_dir():
             raise NotADirectoryError(f"{submission_path} is not a directory")
         # duplicated
         if self.contains(submission_id):
             raise DuplicatedSubmissionIdError(
-                f"duplicated submission id {submission_id}."
-            )
+                f"duplicated submission id {submission_id}.")
         # read submission meta
         with (submission_path / "meta.json").open() as f:
             submission_config = Meta.parse_obj(json.load(f))
 
         # [Strat] static analysis
         try:
-            logger().debug(f"Try to fetch problem rules. [problem_id: {problem_id}]")
+            logger().debug(
+                f"Try to fetch problem rules. [problem_id: {problem_id}]")
             rules_json = fetch_problem_rules(problem_id)
 
             if rules_json:
@@ -137,8 +141,7 @@ class Dispatcher(threading.Thread):
 
                 if not analysis_result.is_success():
                     logger().warning(
-                        f"Static analysis failed: {analysis_result.message}"
-                    )
+                        f"Static analysis failed: {analysis_result.message}")
                     return
             else:
                 logger().debug(
@@ -178,11 +181,11 @@ class Dispatcher(threading.Thread):
         Release variable about submission
         """
         for v in (
-            self.result,
-            self.compile_locks,
-            self.compile_results,
-            self.locks,
-            self.created_at,
+                self.result,
+                self.compile_locks,
+                self.compile_results,
+                self.locks,
+                self.created_at,
         ):
             if submission_id in v:
                 del v[submission_id]
@@ -224,15 +227,14 @@ class Dispatcher(threading.Thread):
                     ),
                 ).start()
             # if this submission needs compile and it haven't finished
-            elif (
-                self.compile_need(submission_config.language)
-                and self.compile_results.get(submission_id) is None
-            ):
+            elif (self.compile_need(submission_config.language)
+                  and self.compile_results.get(submission_id) is None):
                 self.queue.put(_job)
             else:
                 task_info = submission_config.tasks[_job.task_id]
                 case_no = f"{_job.task_id:02d}{_job.case_id:02d}"
-                logger().info(f"create container [task={submission_id}/{case_no}]")
+                logger().info(
+                    f"create container [task={submission_id}/{case_no}]")
                 logger().debug(f"task info: {task_info}")
                 # output path should be the container path
                 base_path = self.SUBMISSION_DIR / submission_id / "testcase"
@@ -268,14 +270,13 @@ class Dispatcher(threading.Thread):
         # another thread is compiling this submission, bye
         if self.compile_locks[submission_id].locked():
             logger().error(
-                f"start a compile thread on locked submission {submission_id}"
-            )
+                f"start a compile thread on locked submission {submission_id}")
             return
         # this submission should not be compiled!
         if not self.compile_need(lang):
             logger().warning(
-                f"try to compile submission {submission_id}" f" with language {lang}",
-            )
+                f"try to compile submission {submission_id}"
+                f" with language {lang}", )
             return
         # compile this submission. don't forget to acquire the lock
         with self.compile_locks[submission_id]:
@@ -360,7 +361,8 @@ class Dispatcher(threading.Thread):
     ):
         # if id not exists
         if submission_id not in self.result:
-            raise SubmissionIdNotFoundError(f"Unexisted id {submission_id} recieved")
+            raise SubmissionIdNotFoundError(
+                f"Unexisted id {submission_id} recieved")
         # update case result
         _, results = self.result[submission_id]
         if case_no not in results:
@@ -403,16 +405,17 @@ class Dispatcher(threading.Thread):
         assert [*submission_result.keys()] == [*range(len(submission_result))]
         submission_result = [*submission_result.values()]
         # post data
-        submission_data = {"tasks": submission_result, "token": config.SANDBOX_TOKEN}
+        submission_data = {
+            "tasks": submission_result,
+            "token": config.SANDBOX_TOKEN
+        }
         self.release(submission_id)
         logger().info(f"send to BE [submission_id={submission_id}]")
         resp = requests.put(
             f"{config.BACKEND_API}/submission/{submission_id}/complete",
             json=submission_data,
         )
-        logger().debug(
-            f"get BE response: [{resp.status_code}] {resp.text}",
-        )
+        logger().debug(f"get BE response: [{resp.status_code}] {resp.text}", )
         # clear
         if resp.ok:
             file_manager.clean_data(submission_id)
@@ -421,12 +424,12 @@ class Dispatcher(threading.Thread):
             file_manager.backup_data(submission_id)
 
     def get_static_analysis_rules(self, problem_id: int):
-        logger().debug(f"Try to fetch problem rules. [problem_id: {problem_id}]")
+        logger().debug(
+            f"Try to fetch problem rules. [problem_id: {problem_id}]")
         try:
             rules = fetch_problem_rules(problem_id)
             return rules
         except Exception as e:
             logger().warning(
-                f"Do not fetch problem rules. [problem_id: {problem_id}] {e}"
-            )
+                f"Do not fetch problem rules. [problem_id: {problem_id}] {e}")
             return None

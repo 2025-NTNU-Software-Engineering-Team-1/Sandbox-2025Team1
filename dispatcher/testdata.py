@@ -80,7 +80,6 @@ def fetch_testdata(problem_id: int):
     return resp.content
 
 
-
 def get_checksum(problem_id: int) -> str:
     resp = rq.get(
         f"{BACKEND_API}/problem/{problem_id}/checksum",

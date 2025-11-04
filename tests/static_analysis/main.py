@@ -1,12 +1,12 @@
 import sys, os
 import json
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+sys.path.append(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from pathlib import Path
 from dispatcher.static_analysis import StaticAnalyzer
 from dispatcher.constant import Language
-
 
 # /home/maxcho/Normal-OJ-2025Team1/Sandbox/tests/static_analysis
 submission_path = Path("./test_file")
@@ -18,7 +18,6 @@ analysis_result = analyzer_instance.analyze(
     language=Language.PY,
     rules=rules,
 )
-
 
 print("in dispatcher static result:")
 print("==================")

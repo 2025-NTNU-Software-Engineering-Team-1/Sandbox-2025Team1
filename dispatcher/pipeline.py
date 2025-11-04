@@ -2,8 +2,7 @@ import json
 import requests as rq
 
 from .utils import (
-    logger,
-)
+    logger, )
 from .config import (
     BACKEND_API,
     SANDBOX_TOKEN,
@@ -39,8 +38,10 @@ def fetch_problem_rules(problem_id: int) -> dict:
         return content
         # suppose in "rules"
     except ValueError:
-        logger().warning(f"Not found problem rules, [problem_id: {problem_id}]")
+        logger().warning(
+            f"Not found problem rules, [problem_id: {problem_id}]")
         return None
     except Exception as e:
-        logger().error(f"Error during fetch problem rules, [problem_id: {problem_id}]")
+        logger().error(
+            f"Error during fetch problem rules, [problem_id: {problem_id}]")
         return None

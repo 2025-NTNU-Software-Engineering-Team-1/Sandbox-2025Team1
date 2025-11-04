@@ -57,11 +57,13 @@ def pure_function(x: int) -> int:
 
 
 class Inner:
+
     def method(self) -> str:
         return "inner.method"
 
 
 class Outer:
+
     def __init__(self):
         self.inner = Inner()  # 形成 obj.inner.method() 鏈結
 
