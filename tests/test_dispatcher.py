@@ -1,6 +1,7 @@
 from dispatcher.dispatcher import Dispatcher
 from dispatcher.exception import *
 from tests.submission_generator import SubmissionGenerator
+import dispatcher.pipeline
 
 
 def test_create_dispatcher():
@@ -15,7 +16,11 @@ def test_start_dispatcher(docker_dispatcher: Dispatcher):
 def test_normal_submission(
     docker_dispatcher: Dispatcher,
     submission_generator,
+    monkeypatch,
 ):
+    monkeypatch.setattr(dispatcher.pipeline, "fetch_problem_rules",
+                        lambda *args, **kwargs: None)
+
     docker_dispatcher.start()
     _ids = []
     for _id, prob in submission_generator.submission_ids.items():
@@ -31,7 +36,10 @@ def test_normal_submission(
 def test_duplicated_submission(
     docker_dispatcher: Dispatcher,
     submission_generator,
+    monkeypatch,
 ):
+    monkeypatch.setattr(dispatcher.pipeline, "fetch_problem_rules",
+                        lambda *args, **kwargs: None)
     import random
 
     docker_dispatcher.start()
