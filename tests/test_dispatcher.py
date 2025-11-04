@@ -19,13 +19,13 @@ def test_normal_submission(
     docker_dispatcher.start()
     _ids = []
     for _id, prob in submission_generator.submission_ids.items():
-        if prob == 'normal-submission':
+        if prob == "normal-submission":
             _ids.append((_id, prob))
 
     assert len(_ids) != 0
 
     for _id, prob in _ids:
-        docker_dispatcher.handle(_id)
+        docker_dispatcher.handle(_id, 1)
 
 
 def test_duplicated_submission(
@@ -33,6 +33,7 @@ def test_duplicated_submission(
     submission_generator,
 ):
     import random
+
     docker_dispatcher.start()
 
     _id, prob = random.choice(list(
@@ -41,10 +42,10 @@ def test_duplicated_submission(
     assert _id is not None
     assert prob is not None
 
-    docker_dispatcher.handle(_id)
+    docker_dispatcher.handle(_id, 1)
 
     try:
-        docker_dispatcher.handle(_id)
+        docker_dispatcher.handle(_id, 1)
     except DuplicatedSubmissionIdError:
         return
     assert False
