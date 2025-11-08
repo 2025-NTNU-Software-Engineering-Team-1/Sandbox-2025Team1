@@ -17,7 +17,7 @@ from .utils import logger
 
 from .pipeline import fetch_problem_rules
 
-from .static_analysis import StaticAnalyzer, StaticAnalysisError
+from .static_analysis import StaticAnalyzer, StaticAnalysisError, AnalysisResult
 
 
 class Dispatcher(threading.Thread):
@@ -56,6 +56,14 @@ class Dispatcher(threading.Thread):
         self.submission_runner_cwd = pathlib.Path(s_config["working_dir"])
         self.timeout = 300
         self.created_at = {}
+
+        # static analysis
+        self.sa_results = {}
+        self.sa_done = set()
+        self.sa_locks = {}
+
+        # ac code paths
+        self.teacher_ac_paths = {}
 
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}
@@ -125,38 +133,13 @@ class Dispatcher(threading.Thread):
         with (submission_path / "meta.json").open() as f:
             submission_config = Meta.parse_obj(json.load(f))
 
-        # [Strat] static analysis
-        try:
-            logger().debug(
-                f"Try to fetch problem rules. [problem_id: {problem_id}]")
-            rules_json = fetch_problem_rules(problem_id)
-
-            if rules_json:
-                analyzer_instance = StaticAnalyzer()
-                analysis_result = analyzer_instance.analyze(
-                    submission_id=submission_id,
-                    language=submission_config.language,
-                    rules=rules_json,
-                )
-
-                if not analysis_result.is_success():
-                    logger().warning(
-                        f"Static analysis failed: {analysis_result.message}")
-                    return
-            else:
-                logger().debug(
-                    f"Not found problem rules skipping analysis, [problem_id: {problem_id}]"
-                )
-        except StaticAnalysisError as e:
-            logger().error(f"Static analyzer error: {e}")
-        # [End] static analysis
-
         # assign submission context
         task_content = {}
         self.result[submission_id] = (submission_config, task_content)
         self.locks[submission_id] = threading.Lock()
         self.compile_locks[submission_id] = threading.Lock()
         self.created_at[submission_id] = datetime.now()
+        self.sa_locks[submission_id] = threading.Lock()
 
         logger().debug(f"current submissions: {[*self.result.keys()]}")
         try:
@@ -186,9 +169,13 @@ class Dispatcher(threading.Thread):
                 self.compile_results,
                 self.locks,
                 self.created_at,
+                self.sa_locks,
+                self.sa_results,
         ):
             if submission_id in v:
                 del v[submission_id]
+
+        self.sa_done.discard(submission_id)
 
     def run(self):
         self.do_run = True
@@ -218,7 +205,16 @@ class Dispatcher(threading.Thread):
                 continue
             # get task info
             submission_config, _ = self.result[submission_id]
+            problem_id = submission_config.problem_id
             if isinstance(_job, job.Compile):
+                # static analysis executed before compile
+                # [Start] Static Analysis
+                try:
+                    self.do_static_analysis(submission_id, problem_id)
+                except Exception:
+                    logger().warning(
+                        f"static analysis failed for submission {submission_id}",
+                    )
                 threading.Thread(
                     target=self.compile,
                     args=(
@@ -231,6 +227,15 @@ class Dispatcher(threading.Thread):
                   and self.compile_results.get(submission_id) is None):
                 self.queue.put(_job)
             else:
+                # ensure static analysis took place
+                if submission_id not in self.sa_done:
+                    try:
+                        self.do_static_analysis(submission_id, problem_id)
+                    except Exception:
+                        logger().warning(
+                            f"static analysis failed for submission {submission_id}",
+                        )
+
                 task_info = submission_config.tasks[_job.task_id]
                 case_no = f"{_job.task_id:02d}{_job.case_id:02d}"
                 logger().info(
@@ -391,6 +396,14 @@ class Dispatcher(threading.Thread):
             return True
         _, results = self.result[submission_id]
         # parse results
+
+        sa_result = self.sa_results.get(
+            submission_id,
+            {
+                "success": False,
+                "message": "Static analysis not performed.",
+            },
+        )
         submission_result = {}
         for no, r in results.items():
             task_no = int(no[:2])
@@ -407,7 +420,8 @@ class Dispatcher(threading.Thread):
         # post data
         submission_data = {
             "tasks": submission_result,
-            "token": config.SANDBOX_TOKEN
+            "static_analysis": sa_result,
+            "token": config.SANDBOX_TOKEN,
         }
         self.release(submission_id)
         logger().info(f"send to BE [submission_id={submission_id}]")
@@ -423,6 +437,63 @@ class Dispatcher(threading.Thread):
         else:
             file_manager.backup_data(submission_id)
 
+    def do_static_analysis(self, submission_id: str, problem_id: int):
+        # initialize lock for this submission
+        if submission_id not in self.sa_locks:
+            logger().error(f"sa_lock not initialized for {submission_id}")
+            self.sa_locks[submission_id] = threading.Lock()
+        if submission_id in self.sa_done:
+            return
+        with self.sa_locks[submission_id]:
+            if submission_id in self.sa_done:
+                return
+
+            analysis_result = None
+            try:
+                if not self.contains(submission_id):
+                    logger().warning(
+                        f"do_static_analysis: submission {submission_id} not registered; skip."
+                    )
+                    return
+                submission_config, _ = self.result[submission_id]
+
+                rules = self.get_static_analysis_rules(problem_id)
+
+                analyzer = StaticAnalyzer()
+                analysis_result = analyzer.analyze(
+                    submission_id=submission_id,
+                    language=submission_config.language,
+                    rules=rules,
+                )
+
+            except Exception as e:
+                logger().error(
+                    f"Static analysis error for {submission_id}: {e}",
+                    exc_info=True)
+                analysis_result = AnalysisResult(
+                    success=False,
+                    message=f"Static analysis threw exception: {e}")
+            finally:
+                if analysis_result is None:
+                    analysis_result = AnalysisResult(
+                        success=False,
+                        message="Unknown error during static analysis")
+
+                self.on_static_analysis_complete(submission_id=submission_id,
+                                                 result=analysis_result)
+
+    def on_static_analysis_complete(self, submission_id: str,
+                                    result: AnalysisResult):
+        self.sa_results[submission_id] = {
+            "success": result.is_success(),
+            "message": result.message,
+            "rules": result.rules,
+            "facts": result.facts,
+            "violations": result.violations,
+        }
+        self.sa_done.add(submission_id)
+
+    # Back End !!! api call
     def get_static_analysis_rules(self, problem_id: int):
         logger().debug(
             f"Try to fetch problem rules. [problem_id: {problem_id}]")
@@ -431,5 +502,22 @@ class Dispatcher(threading.Thread):
             return rules
         except Exception as e:
             logger().warning(
-                f"Do not fetch problem rules. [problem_id: {problem_id}] {e}")
-            return None
+                f"Do not set problem rules. [problem_id: {problem_id}] {e}")
+            return {}
+
+    # Back End !!! api call
+    # Later use: ask teacher AC code
+    def _find_teacher_ac_codes(self, submission_id: str) -> list[pathlib.Path]:
+        base = self.submission_runner_cwd / submission_id
+        pattern = [
+            "teacher_ac_code.c", "teacher_ac_code.cpp", "teacher_ac_code.py"
+        ]
+        found = []
+        try:
+            for name in pattern:
+                p = base / "testdata" / name
+                if p.exists():
+                    found.append(p)
+        except Exception:
+            pass
+        return found

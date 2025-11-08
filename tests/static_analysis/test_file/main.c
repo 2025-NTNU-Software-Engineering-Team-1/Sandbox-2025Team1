@@ -1,5 +1,3 @@
-/* to_test.c — “常見靜態檢查點”綜合測試檔 */
-
 #include <stdio.h>      // printf, puts, fgets
 #include <stdlib.h>     // malloc, calloc, realloc, free, qsort, bsearch, rand
 #include <string.h>     // memset, memcpy, memmove, strlen, strcmp

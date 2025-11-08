@@ -34,14 +34,13 @@ def fetch_problem_rules(problem_id: int) -> dict:
     )
     try:
         handle_problem_response(resp)
-        content = json.dumps(resp.json()["data"])
-        return content
+        return resp.json()["data"]
         # suppose in "rules"
     except ValueError:
         logger().warning(
             f"Not found problem rules, [problem_id: {problem_id}]")
-        return None
+        return {}
     except Exception as e:
         logger().error(
             f"Error during fetch problem rules, [problem_id: {problem_id}]")
-        return None
+        return {}
