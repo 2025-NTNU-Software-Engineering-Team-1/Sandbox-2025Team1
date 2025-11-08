@@ -9,38 +9,33 @@
 #include <assert.h>     // assert
 #include <errno.h>      // errno
 
-/* ====== 小工具：比較函式給 qsort/bsearch 用 ====== */
 static int cmp_int_asc (const void *a , const void *b) {
     const int ia = *(const int *)a , ib = *(const int *)b;
     return (ia > ib) - (ia < ib);
 }
 
-/* ====== 遞迴 1：階乘（直接遞迴） ====== */
 static unsigned long long factorial (unsigned n) {
     if (n == 0u) return 1ull;
-    return n * factorial (n - 1u); // <- 觸發「直接遞迴」檢查
+    return n * factorial (n - 1u);
 }
 
-/* ====== 遞迴 2：交互遞迴 (Mutual Recursion) ====== */
-// 宣告
 static int mutual_a (int n);
 static int mutual_b (int n);
 
 static int mutual_a (int n) {
     if (n <= 0) return 0;
-    return mutual_b (n - 1); // <- 呼叫 B
+    return mutual_b (n - 1);
 }
 
 static int mutual_b (int n) {
     if (n <= 0) return 1;
-    return mutual_a (n - 1); // <- 呼叫 A (應觸發「交互遞迴」)
+    return mutual_a (n - 1);
 }
 
 
-/* ====== 自訂 Stack（陣列版）— push/pop 測試 ====== */
 typedef struct {
     int *buf;
-    size_t cap , top; /* top 指向下一個可寫位置 */
+    size_t cap , top;
 } IntStack;
 
 static bool stack_init (IntStack *s , size_t cap) {
@@ -60,14 +55,13 @@ static bool stack_pop (IntStack *s , int *out) {
 }
 static void stack_free (IntStack *s) { free (s->buf); s->buf = NULL; s->cap = s->top = 0; }
 
-/* ====== 自訂 Queue（環形佇列）— enqueue/dequeue 測試 ====== */
 typedef struct {
     int *buf;
     size_t cap , head , tail , count;
 } IntQueue;
 
 static bool queue_init (IntQueue *q , size_t cap) {
-    q->buf = (int *)calloc (cap , sizeof (int)); /* 測試 calloc */
+    q->buf = (int *)calloc (cap , sizeof (int)); // alloc
     q->cap = cap; q->head = q->tail = q->count = 0;
     return q->buf != NULL;
 }
@@ -87,8 +81,7 @@ static bool dequeue (IntQueue *q , int *out) {
 }
 static void queue_free (IntQueue *q) { free (q->buf); q->buf = NULL; q->cap = q->head = q->tail = q->count = 0; }
 
-/* ====== 兩種手刻排序 (自訂函式，不應被禁) ====== */
-static void sort (int *a , size_t n) { // 自訂一個也叫 sort 的函式
+static void sort (int *a , size_t n) {
     for (size_t i = 0; i + 1 < n; ++i) {
         size_t j = 0;
         while (j + 1 < n - i) {
@@ -112,30 +105,25 @@ static void insertion_sort (int *a , size_t n) {
     }
 }
 
-/* ====== 記憶體操作測試（memset/memcpy/memmove） ====== */
 static void memory_block_demo (void) {
     size_t n = 16;
     unsigned char *buf = (unsigned char *)malloc (n);
     assert (buf);
 
-    memset (buf , 0xAB , n);                  /* <string.h> */
+    memset (buf , 0xAB , n);
     unsigned char tmp [16];
-    memcpy (tmp , buf , n);                    /* 非重疊，memcpy */
-    /* 製造重疊區段，使用 memmove */
-    memmove (buf + 4 , buf , 8);               /* 重疊時用 memmove 較安全 */
+    memcpy (tmp , buf , n);
+    memmove (buf + 4 , buf , 8);
 
     free (buf);
 }
 
-/* ====== 使用 qsort 與 bsearch（標準庫） ====== */
 static void sort_and_search_demo (void) {
     int arr [] = {7, 1, 5, 9, 3, 8, 2, 6, 4, 0};
     size_t n = sizeof (arr) / sizeof (arr [0]);
 
-    /* 標準庫 qsort — <stdlib.h> (應被 disallow_functions: ["qsort"] 抓到) */
     qsort (arr , n , sizeof (arr [0]) , cmp_int_asc);
 
-    /* 標準庫 bsearch — 陣列需已依比較函式排序 */
     int key = 6;
     int *found = (int *)bsearch (&key , arr , n , sizeof (arr [0]) , cmp_int_asc);
     if (found) {
@@ -143,27 +131,22 @@ static void sort_and_search_demo (void) {
     }
 }
 
-/* ====== 主程式 ====== */
 int main (void) {
-    puts ("== to_test.c: 常見靜態分析檢查點示例 ==");
 
-    /* ——— 1) 迴圈 + 自訂排序 (不應被抓) ——— */
     int a1 [] = {5,4,3,2,1};
-    sort (a1 , sizeof (a1) / sizeof (a1 [0])); // 呼叫自訂的 sort
+    sort (a1 , sizeof (a1) / sizeof (a1 [0]));
     int a2 [] = {9,2,7,1,8,3};
     insertion_sort (a2 , sizeof (a2) / sizeof (a2 [0]));
 
-    /* ——— 2) 遞迴呼叫 ——— */
     unsigned n = 10;
-    unsigned long long f = factorial (n); // 直接遞迴
+    unsigned long long f = factorial (n);
     printf ("factorial(%u) = %llu\n" , n , f);
 
     int m = 5;
-    int r = mutual_a (m); // 交互遞迴
+    int r = mutual_a (m);
     printf ("mutual_a(%d) = %d\n" , m , r);
 
 
-    /* ——— 3) 動態記憶體：malloc/calloc/realloc/free ——— */
     size_t N = 8;
     int *p = (int *)malloc (N * sizeof (int));
     if (!p) { perror ("malloc"); return 1; }
@@ -182,10 +165,8 @@ int main (void) {
 
     memory_block_demo ();
 
-    /* ——— 4) 標準庫排序／搜尋 (應被抓) ——— */
-    sort_and_search_demo (); // 內含 qsort / bsearch
+    sort_and_search_demo ();
 
-    /* ——— 5) 自訂 Stack/Queue：push/pop & enqueue/dequeue ——— */
     IntStack st;
     assert (stack_init (&st , 4));
     stack_push (&st , 10); stack_push (&st , 20); stack_push (&st , 30);
@@ -202,7 +183,6 @@ int main (void) {
     printf ("queue deq = %d\n" , qv);
     queue_free (&qu);
 
-    /* ——— 6) 其他：字串／字元處理 & 一些數學函式 ——— */
     const char *s = "Hello, WORLD!";
     size_t len = strlen (s);
     size_t count_alpha = 0;

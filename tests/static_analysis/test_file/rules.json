@@ -27,9 +27,5 @@
         "insert",
         "sort",
         "reverse"
-    ],
-    "allow_url": [
-        "https://locaclhost:0000",
-        "https://google.com"
     ]
 }

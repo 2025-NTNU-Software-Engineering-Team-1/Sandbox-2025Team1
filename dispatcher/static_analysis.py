@@ -8,6 +8,7 @@ try:
 except ImportError:
     pass
 
+from dispatcher import config as dispatcher_config
 from .constant import Language
 from .utils import logger
 
@@ -150,10 +151,11 @@ class StaticAnalyzer:
         main Analyzer
         """
         ## for debug
-        source_code_path = pathlib.Path(submission_id).resolve()
+        # source_code_path = pathlib.Path(submission_id).resolve()
         ## for real use
-        # working_dir = Path(dispatcher_config.get_submission_config()["working_dir"])
-        # source_code_path = (working_dir / submission_id / "src").resolve()
+        submission_cfg = dispatcher_config.get_submission_config()
+        working_dir = pathlib.Path(submission_cfg["working_dir"])
+        source_code_path = (working_dir / submission_id / "src").resolve()
 
         logger().debug(f"Analysis: {source_code_path} (lang: {language})")
         if not isinstance(rules, dict):
