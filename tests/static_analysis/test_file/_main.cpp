@@ -16,14 +16,30 @@
 #include <unordered_set>
 #include <functional>
 
-// ====== 遞迴：階乘（用來觸發 recursive 檢查） ======
+// ====== 遞迴 1：階乘（直接遞迴） ======
 static long long fact (int n) {
     if (n <= 1) return 1;
-    return n * fact (n - 1); // <- 遞迴呼叫位置
+    return n * fact (n - 1); // <- 觸發「直接遞迴」檢查
 }
 
-// ====== 兩種手刻排序：for / while 都會出現 ======
-static void sort (std::vector<int> &a) {
+// ====== 遞迴 2：交互遞迴 (Mutual Recursion) ======
+// 宣告
+static int mutual_a (int n);
+static int mutual_b (int n);
+
+static int mutual_a (int n) {
+    if (n <= 0) return 0;
+    return mutual_b (n - 1); // <- 呼叫 B
+}
+
+static int mutual_b (int n) {
+    if (n <= 0) return 1;
+    return mutual_a (n - 1); // <- 呼叫 A (應觸發「交互遞迴」)
+}
+
+
+// ====== 兩種手刻排序 (自訂函式，不應被禁) ======
+static void sort (std::vector<int> &a) { // 自訂一個也叫 sort 的函式
     const std::size_t n = a.size ();
     for (std::size_t i = 0; i + 1 < n; ++i) {           // for 檢查點
         std::size_t j = 0;
@@ -65,84 +81,87 @@ static void memory_block_demo () {
 int main () {
     std::cout << "== C++ 綜合檢查示例 ==\n";
 
-    // ---- 1) vector: push_back / pop_back + 自訂排序（for/while） ----
+    // ---- 1) vector: push_back / pop_back + 自訂排序 (不應被抓) ----
     std::vector<int> v = {7,1,5,9,3,8,2,6,4,0};
-    v.push_back (10);           // push_back
-    v.pop_back ();              // pop_back
-    sort (v);
+    v.push_back (10);
+    v.pop_back ();
+    sort (v); // 呼叫自訂的 sort
     insertion_sort (v);
 
-    // ---- 2) 標準演算法：sort / stable_sort / partial_sort / nth_element ----
+    // ---- 2) 標準演算法 (應被抓) ----
     std::vector<int> a (10);
     std::iota (a.begin () , a.end () , 0);     // 0..9
     std::reverse (a.begin () , a.end ());     // 9..0
 
-    // std::sort (a.begin () , a.end ());        // sort
-    std::stable_sort (a.begin () , a.end ()); // stable_sort（此例排序鍵相同效果等同，但可測呼叫）
-    std::partial_sort (a.begin () , a.begin () + 5 , a.end ()); // 部分排序
-    std::nth_element (a.begin () , a.begin () + 3 , a.end ());  // 第3順位元素就定位
+    std::sort (a.begin () , a.end ());        // 應被 disallow_functions: ["sort"] 抓到
+    std::stable_sort (a.begin () , a.end ()); // 應被 disallow_functions: ["stable_sort"] 抓到
+    std::partial_sort (a.begin () , a.begin () + 5 , a.end ()); // partial_sort
+    std::nth_element (a.begin () , a.begin () + 3 , a.end ());  // nth_element
 
-    // for_each + lambda（產生一個 CALL_EXPR 給分析器看）
     std::for_each (a.begin () , a.end () , [] (int &x) { x += 1; });
 
     // ---- 3) 容器：stack / queue / priority_queue 的 push/pop ----
     std::stack<int> st;
     st.push (10); st.push (20); st.push (30);
-    st.pop (); // pop
+    st.pop ();
 
     std::queue<int> q;
     q.push (11); q.push (22); q.push (33);
-    q.pop ();   // pop
+    q.pop ();
 
     std::priority_queue<int> pq;
     pq.push (3); pq.push (7); pq.push (1);
-    pq.pop ();  // pop
+    pq.pop ();
 
     // ---- 4) range-for（CXX_FOR_RANGE_STMT） ----
     int sum = 0;
-    for (int x : a) { sum += x; }  // range-for 檢查點
+    for (int x : a) { sum += x; }
     std::cout << "sum=" << sum << "\n";
 
     // ---- 5) 遞迴呼叫 ----
     const int n = 8;
-    long long f = fact (n); // 呼叫遞迴函式
+    long long f = fact (n); // 直接遞迴
     std::cout << "fact(" << n << ")=" << f << "\n";
 
-    // ---- 6) new[]/delete[] 與 unique_ptr ----
-    int *raw = new int [16];                  // new[]
-    std::memset (raw , 0 , sizeof (int) * 16);
-    delete [] raw;                            // delete[]
+    int m = 5;
+    int r = mutual_a (m); // 交互遞迴
+    std::cout << "mutual_a(" << m << ")=" << r << "\n";
 
-    auto up = std::make_unique<int []> (16);   // unique_ptr + 配列
+
+    // ---- 6) new[]/delete[] 與 unique_ptr ----
+    int *raw = new int [16];
+    std::memset (raw , 0 , sizeof (int) * 16);
+    delete [] raw;
+
+    auto up = std::make_unique<int []> (16);
     up [0] = 42;
 
-    // ---- 7) std::string 基本操作（觸發 <string> header 檢查）----
+    // ---- 7) std::string 基本操作 (應觸發 <string> header 檢查)----
     std::string s = "Hello";
     s += ", world";
     std::cout << s << std::endl;
 
-    // ---- 8) 為了觸發 disallow_functions: printf/malloc/free（C 樣式）----
+    // ---- 8) 為了觸發 disallow_functions: printf/malloc/free (C 樣式)----
     std::printf ("[printf] f=%lld\n" , f);     // printf（在 <cstdio>）
     memory_block_demo ();                     // 內含 malloc/free/mem* 呼叫
 
     // ---- 9) Hash containers & std::hash ----
-    std::unordered_map<std::string , int> um;   // <unordered_map>
-    um.insert ({"alice", 1});                   // insert
-    um.emplace ("bob" , 2);                      // emplace
-    um.try_emplace ("carol" , 3);                // C++17 try_emplace
-    auto it = um.find ("alice");                // find
-    if (it != um.end ()) um.erase (it);          // erase by iterator
-    um.reserve (32);                            // 擴桶以降低 rehash 機率
-    um.rehash (64);                             // 強制設定桶數（可能觸發 rehash）
+    std::unordered_map<std::string , int> um;
+    um.insert ({"alice", 1});
+    um.emplace ("bob" , 2);
+    um.try_emplace ("carol" , 3);
+    auto it = um.find ("alice");
+    if (it != um.end ()) um.erase (it);
+    um.reserve (32);
+    um.rehash (64);
 
-    std::unordered_set<int> us;                // <unordered_set>
+    std::unordered_set<int> us;
     us.insert (42);
     us.emplace (7);
-    bool has42 = (us.count (42) > 0);           // count / 存在性查詢
+    bool has42 = (us.count (42) > 0);
     if (has42) us.erase (42);
 
-    std::size_t hv1 = std::hash<std::string> {}("hello"); // <functional> std::hash 呼叫
-    // 注意：下面這行對 const char* 只會雜湊指標，不是字串內容
+    std::size_t hv1 = std::hash<std::string> {}("hello");
     const char *cs = "world";
     std::size_t hv2 = std::hash<const char *> {}(cs);
     (std::cout << "hv1=" << hv1 << " hv2=" << hv2 << "\n");

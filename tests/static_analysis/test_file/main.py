@@ -9,15 +9,28 @@ from collections import deque  # queue（FIFO）
 from typing import List, Dict, Set
 
 
-# ====== 遞迴：階乘（觸發 recursive 檢查）======
+# ====== 遞迴 1：階乘（觸發 direct recursive 檢查）======
 def fact(n: int) -> int:
     if n <= 1:
         return 1
     return n * fact(n - 1)  # <- 遞迴呼叫位置
 
 
-# ====== 兩種手刻排序：for / while 都會出現 ======
-def sort(a: List[int]) -> None:
+# ====== 遞迴 2：交互遞迴 (Mutual Recursion) ======
+def mutual_a(n: int) -> int:
+    if n <= 0:
+        return 0
+    return mutual_b(n - 1)  # <- 呼叫 B
+
+
+def mutual_b(n: int) -> int:
+    if n <= 0:
+        return 1
+    return mutual_a(n - 1)  # <- 呼叫 A (應觸發「交互遞迴」)
+
+
+# ====== 兩種手刻排序 (自訂函式，不應被禁) ======
+def sort(a: List[int]) -> None:  # 自訂一個也叫 sort 的函式
     n = len(a)
     for i in range(n - 1):  # for 檢查點
         j = 0
@@ -42,13 +55,9 @@ def memory_block_demo() -> None:
     N = 32
     buf = (ctypes.c_ubyte * N)()  # 等價於 malloc N bytes
     ctypes.memset(buf, 0xAA, N)  # memset
-
     tmp = (ctypes.c_ubyte * N)()
     ctypes.memmove(tmp, buf, N)  # memcpy（非重疊）
-
-    # memmove（重疊）：從 buf 開頭搬 16 bytes 到 offset 4
-    ctypes.memmove(ctypes.byref(buf, 4), buf, 16)
-    # （ctypes 無 free，交由 GC 負責）
+    ctypes.memmove(ctypes.byref(buf, 4), buf, 16)  # memmove（重疊）
 
 
 # ====== 物件與方法呼叫（測 ast.Attribute 與 ast.Name） ======
@@ -65,72 +74,49 @@ class Inner:
 class Outer:
 
     def __init__(self):
-        self.inner = Inner()  # 形成 obj.inner.method() 鏈結
+        self.inner = Inner()
 
     def method(self) -> str:
         return "outer.method"
-
-    @property
-    def prop(self) -> int:
-        return 42
-
-
-# ====== 互相遞迴（測可能的 mutual recursion 辨識） ======
-def mutual_a(n: int) -> int:
-    if n <= 0:
-        return 0
-    return mutual_b(n - 1)
-
-
-def mutual_b(n: int) -> int:
-    if n <= 0:
-        return 1
-    return mutual_a(n - 1)
 
 
 def main() -> None:
     print("== Python 綜合檢查示例 ==")
 
-    # ---- 1) list: append / pop + 自訂排序（for/while） ----
+    # ---- 1) list: append / pop + 自訂排序 (不應被抓) ----
     v = [7, 1, 5, 9, 3, 8, 2, 6, 4, 0]
     v.append(10)  # push_back
     v.pop()  # pop_back
-    sort(v)
+    sort(v)  # 呼叫自訂的 sort
     insertion_sort(v)
 
-    # ---- 2) 內建與「近似對位」演算法：sort / stable / partial / nth ----
+    # ---- 2) 內建演算法 (應被抓) ----
     a = list(range(10))
     a.reverse()  # 9..0
 
-    # a.sort()  # sort（Timsort，穩定）
-    # a.sort()  # stable_sort 等價再呼叫一次，保留穩定性測點
+    # 應被 disallow_functions: ["sort"] 抓到
+    a.sort()
 
-    # partial_sort: 取前 5 小（heapq.nsmallest 不改原地，作為“部份排序”測點）
+    # partial_sort: 取前 5 小
     top5 = heapq.nsmallest(5, a)
-
-    # nth_element 類似：找第 3 小並使其就位（以 nsmallest 求第 3 小）
+    # nth_element 類似：找第 3 小並使其就位
     nth3 = heapq.nsmallest(4, a)[-1]
 
-    # for_each + lambda（產生一個 CALL_EXPR/lambda）
+    # for_each + lambda
     a = list(map(lambda x: x + 1, a))
 
     # ---- 3) 容器：stack / queue / priority_queue 的 push/pop ----
     stack = []  # LIFO
     stack.append(10)
     stack.append(20)
-    stack.append(30)
     stack.pop()
 
     q = deque()  # FIFO
     q.append(11)
-    q.append(22)
-    q.append(33)
     q.popleft()
 
     pq = []  # 最小堆（priority_queue 對位）
     heapq.heappush(pq, 3)
-    heapq.heappush(pq, 7)
-    heapq.heappush(pq, 1)
     heapq.heappop(pq)
 
     # ---- 4) range-for（for x in a） ----
@@ -141,8 +127,12 @@ def main() -> None:
 
     # ---- 5) 遞迴呼叫 ----
     n = 8
-    f = fact(n)  # 呼叫遞迴函式
+    f = fact(n)  # 呼叫「直接遞迴」函式
     print(f"fact({n})={f}")
+
+    m = 5
+    r = mutual_a(m)  # 呼叫「交互遞迴」函式
+    print(f"mutual_a({m})={r}")
 
     # ---- 6) 記憶體塊操作（ctypes 版本） ----
     memory_block_demo()
@@ -152,50 +142,44 @@ def main() -> None:
     s1 += ", world"
     print(s1)
 
-    # ---- 8) （可選）風險函式：eval/exec（可能列為 disallow_functions） ----
-    # 僅作靜態分析測點；運行時為固定常數、沒有外部輸入。
-    val = eval("1 + 2")
-    exec("x_exec_demo = 123")  # 產生一個全域符號
+    # ---- 8) 風險函式 (應被抓) ----
+    val = eval("1 + 2")  # 應被 disallow_functions: ["eval"] 抓到
+    exec("x_exec_demo = 123")  # 應被 disallow_functions: ["exec"] 抓到
     print(f"[eval] {val}, [exec var exists] { 'x_exec_demo' in globals() }")
 
     # ---- 9) dict / set 與 hash ----
     um: Dict[str, int] = {}
-    um["alice"] = 1  # insert
-    um.update({"bob": 2})  # emplace 對位
-    um.setdefault("carol", 3)  # try_emplace 對位
-    it = um.get("alice")  # find
+    um["alice"] = 1
+    um.update({"bob": 2})
+    um.setdefault("carol", 3)
+    it = um.get("alice")
     if it is not None:
-        um.pop("alice")  # erase
+        um.pop("alice")
 
     us: Set[int] = set()
     us.add(42)
-    us.add(7)
-    has42 = 42 in us  # 存在性查詢
+    has42 = 42 in us
     if has42:
         us.remove(42)
 
-    hv1 = hash("hello")  # Python 對不可變物件以值雜湊（隨機種子防碰撞）
+    hv1 = hash("hello")
     cs = b"world"
-    hv2 = hash(cs)  # bytes 也以內容雜湊
+    hv2 = hash(cs)
     print(f"hv1={hv1} hv2={hv2}")
 
-    # ---- 10) 物件方法呼叫（ast.Attribute 測點） ----
+    # ---- 10) 物件方法呼叫 ----
     outer = Outer()
-    _ = outer.method()  # obj.method()
-    _ = outer.inner.method()  # obj.inner.method() 鏈結
-    _ = pure_function(2)  # ast.Name 呼叫
+    _ = outer.method()
+    _ = outer.inner.method()
+    _ = pure_function(2)
 
-    # ---- 11) 互相遞迴（mutual recursion） ----
-    _ = mutual_a(3)
-
-    # ---- 12) 斷言與例外（一般靜態點） ----
+    # ---- 11) 斷言與例外 ----
     assert isinstance(top5, list)
     try:
         _ = um["not_exist"]  # KeyError
     except KeyError:
         pass
 
-    # 防止未使用變數被最簡優化器移除（提供更多 AST 節點）
     sys.stdout.write("")
 
 

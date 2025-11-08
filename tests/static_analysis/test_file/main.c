@@ -15,11 +15,27 @@ static int cmp_int_asc (const void *a , const void *b) {
     return (ia > ib) - (ia < ib);
 }
 
-/* ====== 遞迴：階乘（故意設計會被「遞迴檢查」抓到） ====== */
+/* ====== 遞迴 1：階乘（直接遞迴） ====== */
 static unsigned long long factorial (unsigned n) {
     if (n == 0u) return 1ull;
-    return n * factorial (n - 1u);
+    return n * factorial (n - 1u); // <- 觸發「直接遞迴」檢查
 }
+
+/* ====== 遞迴 2：交互遞迴 (Mutual Recursion) ====== */
+// 宣告
+static int mutual_a (int n);
+static int mutual_b (int n);
+
+static int mutual_a (int n) {
+    if (n <= 0) return 0;
+    return mutual_b (n - 1); // <- 呼叫 B
+}
+
+static int mutual_b (int n) {
+    if (n <= 0) return 1;
+    return mutual_a (n - 1); // <- 呼叫 A (應觸發「交互遞迴」)
+}
+
 
 /* ====== 自訂 Stack（陣列版）— push/pop 測試 ====== */
 typedef struct {
@@ -71,9 +87,8 @@ static bool dequeue (IntQueue *q , int *out) {
 }
 static void queue_free (IntQueue *q) { free (q->buf); q->buf = NULL; q->cap = q->head = q->tail = q->count = 0; }
 
-/* ====== 兩種手刻排序，增加常見 for/while 與函式呼叫 ====== */
-static void bubble_sort (int *a , size_t n) {
-    /* for + while 兩種都出現 */
+/* ====== 兩種手刻排序 (自訂函式，不應被禁) ====== */
+static void sort (int *a , size_t n) { // 自訂一個也叫 sort 的函式
     for (size_t i = 0; i + 1 < n; ++i) {
         size_t j = 0;
         while (j + 1 < n - i) {
@@ -117,7 +132,7 @@ static void sort_and_search_demo (void) {
     int arr [] = {7, 1, 5, 9, 3, 8, 2, 6, 4, 0};
     size_t n = sizeof (arr) / sizeof (arr [0]);
 
-    /* 標準庫 qsort — <stdlib.h> */
+    /* 標準庫 qsort — <stdlib.h> (應被 disallow_functions: ["qsort"] 抓到) */
     qsort (arr , n , sizeof (arr [0]) , cmp_int_asc);
 
     /* 標準庫 bsearch — 陣列需已依比較函式排序 */
@@ -132,38 +147,43 @@ static void sort_and_search_demo (void) {
 int main (void) {
     puts ("== to_test.c: 常見靜態分析檢查點示例 ==");
 
-    /* ——— 1) 迴圈（for/while） + 手刻排序 ——— */
+    /* ——— 1) 迴圈 + 自訂排序 (不應被抓) ——— */
     int a1 [] = {5,4,3,2,1};
-    bubble_sort (a1 , sizeof (a1) / sizeof (a1 [0]));
+    sort (a1 , sizeof (a1) / sizeof (a1 [0])); // 呼叫自訂的 sort
     int a2 [] = {9,2,7,1,8,3};
     insertion_sort (a2 , sizeof (a2) / sizeof (a2 [0]));
 
     /* ——— 2) 遞迴呼叫 ——— */
     unsigned n = 10;
-    unsigned long long f = factorial (n);
+    unsigned long long f = factorial (n); // 直接遞迴
     printf ("factorial(%u) = %llu\n" , n , f);
+
+    int m = 5;
+    int r = mutual_a (m); // 交互遞迴
+    printf ("mutual_a(%d) = %d\n" , m , r);
+
 
     /* ——— 3) 動態記憶體：malloc/calloc/realloc/free ——— */
     size_t N = 8;
     int *p = (int *)malloc (N * sizeof (int));
     if (!p) { perror ("malloc"); return 1; }
-    memset (p , 0 , N * sizeof (int));          /* <string.h>: memset */
+    memset (p , 0 , N * sizeof (int));
 
-    int *q = (int *)calloc (N , sizeof (int)); /* <stdlib.h>: calloc */
+    int *q = (int *)calloc (N , sizeof (int));
     if (!q) { perror ("calloc"); free (p); return 1; }
 
     for (size_t i = 0; i < N; ++i) p [i] = (int)i;
-    memcpy (q , p , N * sizeof (int));          /* <string.h>: memcpy */
+    memcpy (q , p , N * sizeof (int));
 
     N *= 2;
-    int *r = (int *)realloc (p , N * sizeof (int)); /* <stdlib.h>: realloc */
-    if (!r) { perror ("realloc"); free (q); free (p); return 1; }
-    p = r;
+    int *r_ptr = (int *)realloc (p , N * sizeof (int));
+    if (!r_ptr) { perror ("realloc"); free (q); free (p); return 1; }
+    p = r_ptr;
 
     memory_block_demo ();
 
-    /* ——— 4) 標準庫排序／搜尋：qsort / bsearch ——— */
-    sort_and_search_demo ();
+    /* ——— 4) 標準庫排序／搜尋 (應被抓) ——— */
+    sort_and_search_demo (); // 內含 qsort / bsearch
 
     /* ——— 5) 自訂 Stack/Queue：push/pop & enqueue/dequeue ——— */
     IntStack st;
@@ -188,11 +208,6 @@ int main (void) {
     size_t count_alpha = 0;
     for (size_t i = 0; i < len; ++i) if (isalpha ((unsigned char)s [i])) ++count_alpha;
     printf ("alpha count = %zu, sqrt(49) = %.1f\n" , count_alpha , sqrt (49.0));
-
-    /* ——— 注意：gets() 已於 C11 移除，切勿使用！———
-       // char buf[16];
-       // gets(buf); // 千萬不要用，僅示範註解，避免編譯失敗
-    */
 
     free (q);
     free (p);

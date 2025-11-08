@@ -447,7 +447,7 @@ class PythonAstVisitor(ast.NodeVisitor):
             self.facts["function_calls"].add(function_name_called)
 
         if (self.current_function_stack
-                and function_name_called == self.current_function_stack[-1]):
+                and function_name_called in self.current_function_stack):
             self.facts["recursive_calls"].append(node.lineno)
         self.generic_visit(node)
 
