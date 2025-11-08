@@ -6,6 +6,7 @@ from pathlib import Path
 from . import config
 from .meta import Meta
 from .utils import logger
+from .constant import SubmissionMode
 
 
 def extract(
@@ -22,22 +23,13 @@ def extract(
     for i, task in enumerate(meta.tasks):
         if task.caseCount == 0:
             logger().warning(f'empty task. [id={submission_id}/{i:02d}]')
-    # extract source code
     code_dir = submission_dir / 'src'
     code_dir.mkdir()
-    with ZipFile(source) as zf:
-        zf.extractall(code_dir)
-    # check
-    files = [*code_dir.iterdir()]
-    if len(files) == 0:
-        raise ValueError('no file in \'src\' directory')
-    language_id = int(meta.language)
-    language_type = ['.c', '.cpp', '.py'][language_id]
-    for _file in files:
-        if _file.stem != 'main':
-            raise ValueError('none main')
-        if _file.suffix != language_type:
-            raise ValueError('data type is not match')
+    submission_mode = SubmissionMode(meta.submissionMode)
+    if submission_mode == SubmissionMode.ZIP:
+        _extract_zip_source(code_dir, source)
+    else:
+        _extract_code_source(code_dir, source, int(meta.language))
     # copy testdata
     testcase_dir = submission_dir / 'testcase'
     shutil.copytree(testdata, testcase_dir)
@@ -49,6 +41,36 @@ def extract(
         for chaos_file in chaos_dir.iterdir():
             shutil.move(str(chaos_file), str(code_dir))
         os.rmdir(chaos_dir)
+
+
+def _extract_code_source(code_dir: Path, source, language_id: int):
+    try:
+        source.seek(0)
+    except (OSError, AttributeError):
+        pass
+    with ZipFile(source) as zf:
+        zf.extractall(code_dir)
+    files = [*code_dir.iterdir()]
+    if len(files) == 0:
+        raise ValueError('no file in \'src\' directory')
+    language_type = ['.c', '.cpp', '.py'][language_id]
+    for _file in files:
+        if _file.stem != 'main':
+            raise ValueError('none main')
+        if _file.suffix != language_type:
+            raise ValueError('data type is not match')
+
+
+def _extract_zip_source(code_dir: Path, source):
+    try:
+        source.seek(0)
+    except (OSError, AttributeError):
+        pass
+    with ZipFile(source) as zf:
+        zf.extractall(code_dir)
+    makefile = code_dir / 'Makefile'
+    if not makefile.exists():
+        raise ValueError('Makefile not found in submission archive')
 
 
 def clean_data(submission_id):

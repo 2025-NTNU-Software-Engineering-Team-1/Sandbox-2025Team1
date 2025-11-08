@@ -1,4 +1,4 @@
-from .constant import Language
+from .constant import Language, SubmissionMode
 from typing import List
 from pydantic import (
     BaseModel,
@@ -18,6 +18,7 @@ class Task(BaseModel):
 class Meta(BaseModel):
     language: Language
     tasks: conlist(Task, min_items=1)
+    submissionMode: SubmissionMode = SubmissionMode.CODE
 
     @validator('tasks')
     def validate_task(cls, v):

@@ -7,7 +7,7 @@ from pathlib import Path
 from zipfile import ZipFile
 import requests as rq
 
-from .constant import Language
+from .constant import Language, SubmissionMode
 from .meta import Meta
 from .utils import (
     get_redis_client,
@@ -58,6 +58,7 @@ def get_problem_meta(problem_id: int, language: Language) -> Meta:
         fetch_problem_meta(problem_id)
     obj = json.load(meta_path.open())
     obj["language"] = int(language)
+    obj.setdefault("submissionMode", int(SubmissionMode.CODE))
     return Meta.parse_obj(obj)
 
 

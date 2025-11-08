@@ -17,3 +17,6 @@ sandbox-testdata/
 sandbox
 .pytest_cache/
 .config/submission.json
+TODO.md
+changelog.md
+version.md

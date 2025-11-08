@@ -56,6 +56,8 @@ def submit(submission_id: str):
     logger.debug(f"send submission {submission_id} to dispatcher")
     try:
         DISPATCHER.handle(submission_id, problem_id)
+    except ValueError as e:
+        return str(e), 400
     except queue.Full:
         return (
             jsonify({

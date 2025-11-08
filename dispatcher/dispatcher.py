@@ -12,7 +12,7 @@ from runner.submission import SubmissionRunner
 from . import job, file_manager, config
 from .exception import *
 from .meta import Meta
-from .constant import Language
+from .constant import Language, SubmissionMode
 from .utils import logger
 
 from .pipeline import fetch_problem_rules
@@ -56,6 +56,7 @@ class Dispatcher(threading.Thread):
         self.submission_runner_cwd = pathlib.Path(s_config["working_dir"])
         self.timeout = 300
         self.created_at = {}
+        self.zip_mode_submissions = set()
 
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}
@@ -104,6 +105,46 @@ class Dispatcher(threading.Thread):
             else:
                 raise
 
+    def _is_zip_submission(self, submission_id: str) -> bool:
+        return submission_id in self.zip_mode_submissions
+
+    def prepare_zip_submission(self, submission_id: str, language: Language):
+        submission_path = self.SUBMISSION_DIR / submission_id
+        src_dir = submission_path / "src"
+        makefile = src_dir / "Makefile"
+        if not makefile.exists():
+            raise ValueError("Makefile not found in submission archive")
+        lang_key = ["c11", "cpp17", "python3"][int(language)]
+        if lang_key == "python3":
+            raise ValueError("zip submission only supports compiled languages")
+        runner = SubmissionRunner(
+            submission_id=submission_id,
+            time_limit=-1,
+            mem_limit=-1,
+            testdata_input_path="",
+            testdata_output_path="",
+            lang=lang_key,
+        )
+        result = runner.build_with_make()
+        if result.get("Status") != "AC":
+            message = result.get("Stderr") or result.get("Stdout") or "make failed"
+            raise ValueError(f"make failed: {message}")
+        binary_path = src_dir / "a.out"
+        if not binary_path.exists():
+            raise ValueError("a.out not found after running make")
+        extra_exec = [
+            p for p in src_dir.iterdir()
+            if p.is_file() and os.access(p, os.X_OK)
+            and p.name not in ('a.out', 'main', 'Makefile')
+        ]
+        if extra_exec:
+            raise ValueError("only one executable named a.out is allowed")
+        target = src_dir / "main"
+        if target.exists():
+            target.unlink()
+        os.replace(binary_path, target)
+        os.chmod(target, target.stat().st_mode | 0o111)
+
     def handle(self, submission_id: str, problem_id: int):
         """
         handle a submission, save its config and push into task queue
@@ -125,30 +166,39 @@ class Dispatcher(threading.Thread):
         with (submission_path / "meta.json").open() as f:
             submission_config = Meta.parse_obj(json.load(f))
 
-        # [Strat] static analysis
-        try:
-            logger().debug(
-                f"Try to fetch problem rules. [problem_id: {problem_id}]")
-            rules_json = fetch_problem_rules(problem_id)
+        submission_mode = SubmissionMode(submission_config.submissionMode)
+        is_zip_mode = submission_mode == SubmissionMode.ZIP
 
-            if rules_json:
-                analyzer_instance = StaticAnalyzer()
-                analysis_result = analyzer_instance.analyze(
-                    submission_id=submission_id,
-                    language=submission_config.language,
-                    rules=rules_json,
-                )
-
-                if not analysis_result.is_success():
-                    logger().warning(
-                        f"Static analysis failed: {analysis_result.message}")
-                    return
-            else:
+        # [Start] static analysis
+        if not is_zip_mode:
+            try:
                 logger().debug(
-                    f"Not found problem rules skipping analysis, [problem_id: {problem_id}]"
-                )
-        except StaticAnalysisError as e:
-            logger().error(f"Static analyzer error: {e}")
+                    f"Try to fetch problem rules. [problem_id: {problem_id}]")
+                rules_json = fetch_problem_rules(problem_id)
+
+                if rules_json:
+                    analyzer_instance = StaticAnalyzer()
+                    analysis_result = analyzer_instance.analyze(
+                        submission_id=submission_id,
+                        language=submission_config.language,
+                        rules=rules_json,
+                    )
+
+                    if not analysis_result.is_success():
+                        logger().warning(
+                            f"Static analysis failed: {analysis_result.message}"
+                        )
+                        return
+                else:
+                    logger().debug(
+                        f"Not found problem rules skipping analysis, [problem_id: {problem_id}]"
+                    )
+            except StaticAnalysisError as e:
+                logger().error(f"Static analyzer error: {e}")
+        else:
+            logger().debug(
+                f"Skip static analysis for zip-mode submission [id={submission_id}]"
+            )
         # [End] static analysis
 
         # assign submission context
@@ -157,10 +207,23 @@ class Dispatcher(threading.Thread):
         self.locks[submission_id] = threading.Lock()
         self.compile_locks[submission_id] = threading.Lock()
         self.created_at[submission_id] = datetime.now()
+        if is_zip_mode:
+            self.zip_mode_submissions.add(submission_id)
+
+        if is_zip_mode:
+            try:
+                self.prepare_zip_submission(submission_id,
+                                            submission_config.language)
+            except ValueError as e:
+                logger().warning(
+                    f"prepare zip submission failed [id={submission_id}]: {e}")
+                self.release(submission_id)
+                raise
 
         logger().debug(f"current submissions: {[*self.result.keys()]}")
         try:
-            if self.compile_need(submission_config.language):
+            if (not is_zip_mode
+                    and self.compile_need(submission_config.language)):
                 self.queue.put_nowait(job.Compile(submission_id=submission_id))
             for i, task in enumerate(submission_config.tasks):
                 for j in range(task.caseCount):
@@ -189,6 +252,7 @@ class Dispatcher(threading.Thread):
         ):
             if submission_id in v:
                 del v[submission_id]
+        self.zip_mode_submissions.discard(submission_id)
 
     def run(self):
         self.do_run = True
@@ -227,7 +291,8 @@ class Dispatcher(threading.Thread):
                     ),
                 ).start()
             # if this submission needs compile and it haven't finished
-            elif (self.compile_need(submission_config.language)
+            elif (not self._is_zip_submission(submission_id)
+                  and self.compile_need(submission_config.language)
                   and self.compile_results.get(submission_id) is None):
                 self.queue.put(_job)
             else:
@@ -345,7 +410,10 @@ class Dispatcher(threading.Thread):
         try:
             return self.compile_results[submission_id]
         except KeyError:
-            status = "CE" if self.compile_need(lang) else "AC"
+            if self._is_zip_submission(submission_id):
+                status = "AC"
+            else:
+                status = "CE" if self.compile_need(lang) else "AC"
             return {"Status": status}
 
     def on_case_complete(
