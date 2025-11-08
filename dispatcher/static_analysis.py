@@ -291,7 +291,7 @@ class StaticAnalyzer:
             "while_loops": [],
             "recursive_calls": [],
         }
-        analyze_c_ast(translation_unit.cursor, facts, None, str(target_path))
+        analyze_c_ast(translation_unit.cursor, facts, set(), str(target_path))
         logger().debug(f"C/C++ analysis facts: {facts}")
         # for debug
         # print(facts)
@@ -410,6 +410,19 @@ class PythonAstVisitor(ast.NodeVisitor):
         self.current_function_stack = []
         self.user_defined_functions = user_defined_functions
 
+    def _get_full_call_name(self, func_node: ast.AST) -> str | None:
+        if isinstance(func_node, ast.Name):
+            return func_node.id
+
+        if isinstance(func_node, ast.Attribute):
+            base_name = self._get_full_call_name(func_node.value)
+            if base_name:
+                return f"{base_name}.{func_node.attr}"
+            else:
+                return func_node.attr
+
+        return None
+
     def visit_Import(self, node):
         for alias in node.names:
             self.facts["imports"].add(alias.name)
@@ -435,26 +448,25 @@ class PythonAstVisitor(ast.NodeVisitor):
         self.current_function_stack.pop()
 
     def visit_Call(self, node):
-        function_name_called = None
-        is_user_defined = False
+        function_name_called = self._get_full_call_name(node.func)
 
-        if isinstance(node.func, ast.Name):
-            function_name_called = node.func.id
-            if function_name_called in self.user_defined_functions:
-                is_user_defined = True
-        elif isinstance(node.func, ast.Attribute):
-            function_name_called = node.func.attr
+        if not function_name_called:
+            self.generic_visit(node)
+            return
+
+        is_user_defined = function_name_called in self.user_defined_functions
 
         if function_name_called and not is_user_defined:
             self.facts["function_calls"].add(function_name_called)
 
-        if (self.current_function_stack
+        if (is_user_defined and self.current_function_stack
                 and function_name_called in self.current_function_stack):
             self.facts["recursive_calls"].append(node.lineno)
+
         self.generic_visit(node)
 
 
-def analyze_c_ast(node, facts, current_func_cursor, main_file_path: str):
+def analyze_c_ast(node, facts, call_stack: set, main_file_path: str):
     if node.kind == clang.cindex.CursorKind.INCLUSION_DIRECTIVE:
         if node.location.file and node.location.file.name == main_file_path:
             facts["headers"].add(node.displayname)
@@ -486,15 +498,22 @@ def analyze_c_ast(node, facts, current_func_cursor, main_file_path: str):
                     if name:
                         facts["function_calls"].add(name)
 
-            if (current_func_cursor is not None and callee is not None
-                    and callee.get_usr() and current_func_cursor.get_usr()
-                    and callee.get_usr() == current_func_cursor.get_usr()):
+            callee_usr = callee.get_usr() if callee else None
+            if callee_usr and callee_usr in call_stack:
                 facts["recursive_calls"].append(node.location.line)
 
     if node.kind == clang.cindex.CursorKind.FUNCTION_DECL:
-        new_func_cursor = node
+        func_usr = node.get_usr()
+        added_to_stack = False
+        if func_usr:
+            added_to_stack = True
+            call_stack.add(func_usr)
+
         for child in node.get_children():
-            analyze_c_ast(child, facts, new_func_cursor, main_file_path)
+            analyze_c_ast(child, facts, call_stack, main_file_path)
+
+        if added_to_stack:
+            call_stack.remove(func_usr)
     else:
         for child in node.get_children():
-            analyze_c_ast(child, facts, current_func_cursor, main_file_path)
+            analyze_c_ast(child, facts, call_stack, main_file_path)
