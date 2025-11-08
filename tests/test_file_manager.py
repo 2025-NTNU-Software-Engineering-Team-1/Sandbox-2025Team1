@@ -11,8 +11,10 @@ from dispatcher.constant import SubmissionMode
 
 def _build_meta(mode: SubmissionMode) -> Meta:
     return Meta.parse_obj({
-        "language": 1,
-        "submissionMode": int(mode),
+        "language":
+        1,
+        "submissionMode":
+        int(mode),
         "tasks": [{
             "taskScore": 100,
             "memoryLimit": 32768,

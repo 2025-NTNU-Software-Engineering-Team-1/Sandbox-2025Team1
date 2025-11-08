@@ -127,15 +127,16 @@ class Dispatcher(threading.Thread):
         )
         result = runner.build_with_make()
         if result.get("Status") != "AC":
-            message = result.get("Stderr") or result.get("Stdout") or "make failed"
+            message = result.get("Stderr") or result.get(
+                "Stdout") or "make failed"
             raise ValueError(f"make failed: {message}")
         binary_path = src_dir / "a.out"
         if not binary_path.exists():
             raise ValueError("a.out not found after running make")
         extra_exec = [
             p for p in src_dir.iterdir()
-            if p.is_file() and os.access(p, os.X_OK)
-            and p.name not in ('a.out', 'main', 'Makefile')
+            if p.is_file() and os.access(p, os.X_OK) and p.name not in (
+                'a.out', 'main', 'Makefile')
         ]
         if extra_exec:
             raise ValueError("only one executable named a.out is allowed")

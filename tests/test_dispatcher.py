@@ -77,7 +77,12 @@ def test_prepare_zip_submission_success(monkeypatch, tmp_path):
 
     def fake_build(self):
         (src_dir / "a.out").write_text("binary")
-        return {"Status": "AC", "Stdout": "", "Stderr": "", "DockerExitCode": 0}
+        return {
+            "Status": "AC",
+            "Stdout": "",
+            "Stderr": "",
+            "DockerExitCode": 0
+        }
 
     monkeypatch.setattr(SubmissionRunner, "build_with_make", fake_build)
     dispatcher.prepare_zip_submission(submission_id, Language.CPP)
@@ -94,7 +99,12 @@ def test_prepare_zip_submission_failure(monkeypatch, tmp_path):
     (src_dir / "Makefile").write_text("all:\n\t@true\n")
 
     def fake_build(self):
-        return {"Status": "CE", "Stdout": "", "Stderr": "boom", "DockerExitCode": 1}
+        return {
+            "Status": "CE",
+            "Stdout": "",
+            "Stderr": "boom",
+            "DockerExitCode": 1
+        }
 
     monkeypatch.setattr(SubmissionRunner, "build_with_make", fake_build)
     with pytest.raises(ValueError):

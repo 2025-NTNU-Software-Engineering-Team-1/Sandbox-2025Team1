@@ -83,12 +83,11 @@ class SubmissionRunner:
         src_dir = self._src_dir()
         client = docker.APIClient(base_url=self.docker_url)
         lang_key = self.lang if self.lang in self.image else 'cpp17'
-        host_config = client.create_host_config(binds={
-            src_dir: {
+        host_config = client.create_host_config(
+            binds={src_dir: {
                 'bind': '/src',
                 'mode': 'rw'
-            }
-        })
+            }})
         container = client.create_container(
             image=self.image[lang_key],
             command=["/bin/sh", "-c", "make"],
@@ -102,10 +101,10 @@ class SubmissionRunner:
         try:
             client.start(container)
             exit_status = client.wait(container)
-            stdout = client.logs(
-                container, stdout=True, stderr=False).decode('utf-8', 'ignore')
-            stderr = client.logs(
-                container, stdout=False, stderr=True).decode('utf-8', 'ignore')
+            stdout = client.logs(container, stdout=True,
+                                 stderr=False).decode('utf-8', 'ignore')
+            stderr = client.logs(container, stdout=False,
+                                 stderr=True).decode('utf-8', 'ignore')
         except Exception as exc:
             raise ValueError(f"make execution failed: {exc}") from exc
         finally:
