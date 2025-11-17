@@ -52,6 +52,20 @@ def fetch_problem_meta(problem_id: int) -> str:
     return content
 
 
+def fetch_problem_asset(problem_id: int, asset_type: str) -> bytes:
+    logger().debug(
+        f"fetch problem asset [problem_id: {problem_id}, asset_type: {asset_type}]"
+    )
+    resp = rq.get(
+        f"{BACKEND_API}/problem/{problem_id}/asset/{asset_type}",
+        params={
+            "token": SANDBOX_TOKEN,
+        },
+    )
+    handle_problem_response(resp)
+    return resp.content
+
+
 def get_problem_meta(problem_id: int, language: Language) -> Meta:
     meta_path = META_DIR / f"{problem_id}.json"
     if not meta_path.exists():

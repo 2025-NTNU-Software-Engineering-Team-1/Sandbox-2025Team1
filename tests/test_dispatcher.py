@@ -1,10 +1,13 @@
+import io
+import zipfile
 from dispatcher.dispatcher import Dispatcher
 from dispatcher.exception import *
-from dispatcher.constant import Language
+from dispatcher.constant import ExecutionMode, Language, SubmissionMode
 from runner.submission import SubmissionRunner
 from tests.submission_generator import SubmissionGenerator
 import dispatcher.pipeline
 import pytest
+from dispatcher.meta import Meta, Task
 
 
 def test_create_dispatcher():
@@ -109,3 +112,88 @@ def test_prepare_zip_submission_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(SubmissionRunner, "build_with_make", fake_build)
     with pytest.raises(ValueError):
         dispatcher.prepare_zip_submission(submission_id, Language.C)
+
+
+def _function_only_meta(language: Language) -> Meta:
+    return Meta(
+        language=language,
+        tasks=[
+            Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)
+        ],
+        submissionMode=SubmissionMode.CODE,
+        executionMode=ExecutionMode.FUNCTION_ONLY,
+        assetPaths={
+            'makefile': 'problem/1/makefile.zip',
+        },
+    )
+
+
+def test_prepare_function_only_submission(monkeypatch, tmp_path):
+    dispatcher = Dispatcher()
+    dispatcher.SUBMISSION_DIR = tmp_path
+    submission_id = "func-sub"
+    src_dir = tmp_path / submission_id / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "main.c").write_text("int foo(){return 0;}")
+
+    bundle = io.BytesIO()
+    with zipfile.ZipFile(bundle, 'w') as zf:
+        zf.writestr('Makefile', 'all:\n\t@touch a.out\n')
+        zf.writestr('function.h', '// template')
+    bundle_bytes = bundle.getvalue()
+    monkeypatch.setattr(
+        "dispatcher.dispatcher.fetch_problem_asset",
+        lambda problem_id, asset_type: bundle_bytes)
+
+    def fake_build(self):
+        (src_dir / "a.out").write_text("binary")
+        return {
+            "Status": "AC",
+            "Stdout": "",
+            "Stderr": "",
+            "DockerExitCode": 0
+        }
+
+    monkeypatch.setattr(SubmissionRunner, "build_with_make", fake_build)
+    dispatcher.prepare_function_only_submission(
+        submission_id=submission_id,
+        problem_id=1,
+        meta=_function_only_meta(Language.C),
+    )
+    assert (src_dir / "function.h").read_text() == "int foo(){return 0;}"
+    assert (src_dir / "main").exists()
+
+
+def test_prepare_function_only_python(monkeypatch, tmp_path):
+    dispatcher = Dispatcher()
+    dispatcher.SUBMISSION_DIR = tmp_path
+    submission_id = "func-py"
+    src_dir = tmp_path / submission_id / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "main.py").write_text("print('hi')")
+
+    bundle = io.BytesIO()
+    with zipfile.ZipFile(bundle, 'w') as zf:
+        zf.writestr('Makefile', 'all:\n\t@true\n')
+        zf.writestr('student_impl.py', '# existing')
+        zf.writestr('main.py', 'print("teacher")')
+    bundle_bytes = bundle.getvalue()
+    monkeypatch.setattr(
+        "dispatcher.dispatcher.fetch_problem_asset",
+        lambda problem_id, asset_type: bundle_bytes)
+
+    def fake_build(self):
+        return {
+            "Status": "AC",
+            "Stdout": "",
+            "Stderr": "",
+            "DockerExitCode": 0
+        }
+
+    monkeypatch.setattr(SubmissionRunner, "build_with_make", fake_build)
+    dispatcher.prepare_function_only_submission(
+        submission_id=submission_id,
+        problem_id=1,
+        meta=_function_only_meta(Language.PY),
+    )
+    assert (src_dir / "student_impl.py").read_text() == "print('hi')"

@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import threading
@@ -7,15 +8,16 @@ import pathlib
 import queue
 import textwrap
 import shutil
+import zipfile
 from datetime import datetime
 from runner.submission import SubmissionRunner
 from . import job, file_manager, config
 from .exception import *
 from .meta import Meta
-from .constant import Language, SubmissionMode
+from .constant import ExecutionMode, Language, SubmissionMode
 from .utils import logger
-
 from .pipeline import fetch_problem_rules
+from .testdata import fetch_problem_asset
 
 from .static_analysis import StaticAnalyzer, StaticAnalysisError
 
@@ -57,6 +59,7 @@ class Dispatcher(threading.Thread):
         self.timeout = 300
         self.created_at = {}
         self.zip_mode_submissions = set()
+        self.function_only_submissions = set()
 
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}
@@ -108,6 +111,13 @@ class Dispatcher(threading.Thread):
     def _is_zip_submission(self, submission_id: str) -> bool:
         return submission_id in self.zip_mode_submissions
 
+    def _is_function_only_submission(self, submission_id: str) -> bool:
+        return submission_id in self.function_only_submissions
+
+    def _is_prebuilt_submission(self, submission_id: str) -> bool:
+        return (self._is_zip_submission(submission_id)
+                or self._is_function_only_submission(submission_id))
+
     def prepare_zip_submission(self, submission_id: str, language: Language):
         submission_path = self.SUBMISSION_DIR / submission_id
         src_dir = submission_path / "src"
@@ -145,6 +155,66 @@ class Dispatcher(threading.Thread):
             target.unlink()
         os.replace(binary_path, target)
         os.chmod(target, target.stat().st_mode | 0o111)
+
+    def prepare_function_only_submission(
+        self,
+        submission_id: str,
+        problem_id: int,
+        meta: Meta,
+    ):
+        src_dir = self.SUBMISSION_DIR / submission_id / "src"
+        lang_ext = {
+            Language.C: ".c",
+            Language.CPP: ".cpp",
+            Language.PY: ".py",
+        }
+        ext = lang_ext.get(meta.language)
+        if ext is None:
+            raise ValueError("unsupported language for function-only mode")
+        student_file = src_dir / f"main{ext}"
+        if not student_file.exists():
+            raise ValueError("student source not found")
+        student_code = student_file.read_text()
+        makefile_asset = meta.assetPaths.get("makefile")
+        if not makefile_asset:
+            raise ValueError("function-only mode requires makefile asset")
+        archive_bytes = fetch_problem_asset(problem_id, "makefile")
+        for entry in src_dir.iterdir():
+            if entry.is_file():
+                entry.unlink()
+            else:
+                shutil.rmtree(entry)
+        with zipfile.ZipFile(io.BytesIO(archive_bytes)) as zf:
+            zf.extractall(src_dir)
+        template_name = (
+            "function.h"
+            if meta.language in (Language.C, Language.CPP) else "student_impl.py")
+        template_path = src_dir / template_name
+        template_path.parent.mkdir(parents=True, exist_ok=True)
+        template_path.write_text(student_code)
+        lang_key = ["c11", "cpp17", "python3"][int(meta.language)]
+        runner = SubmissionRunner(
+            submission_id=submission_id,
+            time_limit=-1,
+            mem_limit=-1,
+            testdata_input_path="",
+            testdata_output_path="",
+            lang=lang_key,
+        )
+        result = runner.build_with_make()
+        if result.get("Status") != "AC":
+            message = result.get("Stderr") or result.get(
+                "Stdout") or "make failed"
+            raise ValueError(f"make failed: {message}")
+        if meta.language in (Language.C, Language.CPP):
+            binary_path = src_dir / "a.out"
+            if not binary_path.exists():
+                raise ValueError("a.out not found after running make")
+            target = src_dir / "main"
+            if target.exists():
+                target.unlink()
+            os.replace(binary_path, target)
+            os.chmod(target, target.stat().st_mode | 0o111)
 
     def handle(self, submission_id: str, problem_id: int):
         """
@@ -210,6 +280,8 @@ class Dispatcher(threading.Thread):
         self.created_at[submission_id] = datetime.now()
         if is_zip_mode:
             self.zip_mode_submissions.add(submission_id)
+        if submission_config.executionMode == ExecutionMode.FUNCTION_ONLY:
+            self.function_only_submissions.add(submission_id)
 
         if is_zip_mode:
             try:
@@ -220,10 +292,23 @@ class Dispatcher(threading.Thread):
                     f"prepare zip submission failed [id={submission_id}]: {e}")
                 self.release(submission_id)
                 raise
+        elif submission_config.executionMode == ExecutionMode.FUNCTION_ONLY:
+            try:
+                self.prepare_function_only_submission(
+                    submission_id=submission_id,
+                    problem_id=problem_id,
+                    meta=submission_config,
+                )
+            except ValueError as e:
+                logger().warning(
+                    f"prepare function-only submission failed [id={submission_id}]: {e}"
+                )
+                self.release(submission_id)
+                raise
 
         logger().debug(f"current submissions: {[*self.result.keys()]}")
         try:
-            if (not is_zip_mode
+            if (not self._is_prebuilt_submission(submission_id)
                     and self.compile_need(submission_config.language)):
                 self.queue.put_nowait(job.Compile(submission_id=submission_id))
             for i, task in enumerate(submission_config.tasks):
@@ -254,6 +339,7 @@ class Dispatcher(threading.Thread):
             if submission_id in v:
                 del v[submission_id]
         self.zip_mode_submissions.discard(submission_id)
+        self.function_only_submissions.discard(submission_id)
 
     def run(self):
         self.do_run = True
@@ -292,7 +378,7 @@ class Dispatcher(threading.Thread):
                     ),
                 ).start()
             # if this submission needs compile and it haven't finished
-            elif (not self._is_zip_submission(submission_id)
+            elif (not self._is_prebuilt_submission(submission_id)
                   and self.compile_need(submission_config.language)
                   and self.compile_results.get(submission_id) is None):
                 self.queue.put(_job)
