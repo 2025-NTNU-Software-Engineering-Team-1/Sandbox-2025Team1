@@ -18,5 +18,7 @@ sandbox
 .pytest_cache/
 .config/submission.json
 TODO.md
+Spec.md
+note.md
 changelog.md
 version.md
