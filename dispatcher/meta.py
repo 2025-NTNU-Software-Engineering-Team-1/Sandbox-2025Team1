@@ -1,5 +1,5 @@
-from .constant import Language, SubmissionMode
-from typing import List
+from .constant import ExecutionMode, Language, SubmissionMode
+from typing import Dict, List, Optional
 from pydantic import (
     BaseModel,
     Field,
@@ -19,6 +19,10 @@ class Meta(BaseModel):
     language: Language
     tasks: conlist(Task, min_items=1)
     submissionMode: SubmissionMode = SubmissionMode.CODE
+    executionMode: ExecutionMode = ExecutionMode.GENERAL
+    assetPaths: Dict[str, str] = Field(default_factory=dict)
+    teacherFirst: bool = False
+    networkAccessRestriction: Optional[dict] = None
 
     @validator('tasks')
     def validate_task(cls, v):

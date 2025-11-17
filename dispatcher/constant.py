@@ -10,3 +10,9 @@ class Language(IntEnum):
 class SubmissionMode(IntEnum):
     CODE = 0
     ZIP = 1
+
+
+class ExecutionMode(IntEnum):
+    GENERAL = 0
+    FUNCTION_ONLY = 1
+    INTERACTIVE = 2

@@ -7,7 +7,7 @@ from pathlib import Path
 from zipfile import ZipFile
 import requests as rq
 
-from .constant import Language, SubmissionMode
+from .constant import ExecutionMode, Language, SubmissionMode
 from .meta import Meta
 from .utils import (
     get_redis_client,
@@ -59,6 +59,17 @@ def get_problem_meta(problem_id: int, language: Language) -> Meta:
     obj = json.load(meta_path.open())
     obj["language"] = int(language)
     obj.setdefault("submissionMode", int(SubmissionMode.CODE))
+    exec_mode = obj.get("executionMode", ExecutionMode.GENERAL.value)
+    if isinstance(exec_mode, str):
+        mapping = {
+            "general": ExecutionMode.GENERAL.value,
+            "functionOnly": ExecutionMode.FUNCTION_ONLY.value,
+            "interactive": ExecutionMode.INTERACTIVE.value,
+        }
+        exec_mode = mapping.get(exec_mode, ExecutionMode.GENERAL.value)
+    obj["executionMode"] = exec_mode
+    obj.setdefault("assetPaths", {})
+    obj.setdefault("teacherFirst", False)
     return Meta.parse_obj(obj)
 
 
