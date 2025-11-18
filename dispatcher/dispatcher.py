@@ -1,4 +1,3 @@
-import io
 import json
 import os
 import threading
@@ -8,16 +7,21 @@ import pathlib
 import queue
 import textwrap
 import shutil
-import zipfile
 from datetime import datetime
 from runner.submission import SubmissionRunner
 from . import job, file_manager, config
 from .exception import *
 from .meta import Meta
-from .constant import ExecutionMode, Language, SubmissionMode
+from .constant import BuildStrategy, ExecutionMode, Language, SubmissionMode
+from .build_strategy import (
+    BuildPlan,
+    BuildStrategyError,
+    prepare_function_only_submission,
+    prepare_make_interactive,
+    prepare_make_normal,
+)
 from .utils import logger
 from .pipeline import fetch_problem_rules
-from .testdata import fetch_problem_asset
 
 from .static_analysis import StaticAnalyzer, StaticAnalysisError
 
@@ -58,8 +62,10 @@ class Dispatcher(threading.Thread):
         self.submission_runner_cwd = pathlib.Path(s_config["working_dir"])
         self.timeout = 300
         self.created_at = {}
-        self.zip_mode_submissions = set()
-        self.function_only_submissions = set()
+        self.prebuilt_submissions = set()
+        self.build_strategies = {}
+        self.build_plans = {}
+        self.build_locks = {}
 
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}
@@ -108,113 +114,78 @@ class Dispatcher(threading.Thread):
             else:
                 raise
 
-    def _is_zip_submission(self, submission_id: str) -> bool:
-        return submission_id in self.zip_mode_submissions
-
-    def _is_function_only_submission(self, submission_id: str) -> bool:
-        return submission_id in self.function_only_submissions
-
     def _is_prebuilt_submission(self, submission_id: str) -> bool:
-        return (self._is_zip_submission(submission_id)
-                or self._is_function_only_submission(submission_id))
+        return submission_id in self.prebuilt_submissions
 
-    def prepare_zip_submission(self, submission_id: str, language: Language):
-        submission_path = self.SUBMISSION_DIR / submission_id
-        src_dir = submission_path / "src"
-        makefile = src_dir / "Makefile"
-        if not makefile.exists():
-            raise ValueError("Makefile not found in submission archive")
-        lang_key = ["c11", "cpp17", "python3"][int(language)]
-        if lang_key == "python3":
-            raise ValueError("zip submission only supports compiled languages")
-        runner = SubmissionRunner(
-            submission_id=submission_id,
-            time_limit=-1,
-            mem_limit=-1,
-            testdata_input_path="",
-            testdata_output_path="",
-            lang=lang_key,
-        )
-        result = runner.build_with_make()
-        if result.get("Status") != "AC":
-            message = result.get("Stderr") or result.get(
-                "Stdout") or "make failed"
-            raise ValueError(f"make failed: {message}")
-        binary_path = src_dir / "a.out"
-        if not binary_path.exists():
-            raise ValueError("a.out not found after running make")
-        extra_exec = [
-            p for p in src_dir.iterdir()
-            if p.is_file() and os.access(p, os.X_OK) and p.name not in (
-                'a.out', 'main', 'Makefile')
-        ]
-        if extra_exec:
-            raise ValueError("only one executable named a.out is allowed")
-        target = src_dir / "main"
-        if target.exists():
-            target.unlink()
-        os.replace(binary_path, target)
-        os.chmod(target, target.stat().st_mode | 0o111)
+    def _is_build_pending(self, submission_id: str) -> bool:
+        return submission_id in self.build_plans
 
-    def prepare_function_only_submission(
+    def _clear_submission_jobs(self, submission_id: str):
+        pending = []
+        while True:
+            try:
+                job_item = self.queue.get_nowait()
+            except queue.Empty:
+                break
+            if getattr(job_item, "submission_id", None) != submission_id:
+                pending.append(job_item)
+        for item in pending:
+            self.queue.put(item)
+
+    def _handle_build_failure(self, submission_id: str, message: str):
+        """Handle build/make failure by clearing queue and finalizing as CE."""
+        err_msg = message or "build failed"
+        logger().warning(f"build failed [id={submission_id}]: {err_msg}")
+        self.build_plans.pop(submission_id, None)
+        self.build_locks.pop(submission_id, None)
+        self.prebuilt_submissions.discard(submission_id)
+        self._clear_submission_jobs(submission_id)
+        if submission_id not in self.result:
+            return
+        _, task_content = self.result[submission_id]
+        failure_result = {
+            "stdout": "",
+            "stderr": err_msg,
+            "exitCode": 1,
+            "execTime": -1,
+            "memoryUsage": -1,
+            "status": "CE",
+        }
+        for case_no in task_content.keys():
+            task_content[case_no] = failure_result.copy()
+        self.on_submission_complete(submission_id)
+
+    def _prepare_with_build_strategy(
         self,
         submission_id: str,
         problem_id: int,
         meta: Meta,
-    ):
-        src_dir = self.SUBMISSION_DIR / submission_id / "src"
-        lang_ext = {
-            Language.C: ".c",
-            Language.CPP: ".cpp",
-            Language.PY: ".py",
-        }
-        ext = lang_ext.get(meta.language)
-        if ext is None:
-            raise ValueError("unsupported language for function-only mode")
-        student_file = src_dir / f"main{ext}"
-        if not student_file.exists():
-            raise ValueError("student source not found")
-        student_code = student_file.read_text()
-        makefile_asset = meta.assetPaths.get("makefile")
-        if not makefile_asset:
-            raise ValueError("function-only mode requires makefile asset")
-        archive_bytes = fetch_problem_asset(problem_id, "makefile")
-        for entry in src_dir.iterdir():
-            if entry.is_file():
-                entry.unlink()
-            else:
-                shutil.rmtree(entry)
-        with zipfile.ZipFile(io.BytesIO(archive_bytes)) as zf:
-            zf.extractall(src_dir)
-        template_name = (
-            "function.h"
-            if meta.language in (Language.C, Language.CPP) else "student_impl.py")
-        template_path = src_dir / template_name
-        template_path.parent.mkdir(parents=True, exist_ok=True)
-        template_path.write_text(student_code)
-        lang_key = ["c11", "cpp17", "python3"][int(meta.language)]
-        runner = SubmissionRunner(
-            submission_id=submission_id,
-            time_limit=-1,
-            mem_limit=-1,
-            testdata_input_path="",
-            testdata_output_path="",
-            lang=lang_key,
-        )
-        result = runner.build_with_make()
-        if result.get("Status") != "AC":
-            message = result.get("Stderr") or result.get(
-                "Stdout") or "make failed"
-            raise ValueError(f"make failed: {message}")
-        if meta.language in (Language.C, Language.CPP):
-            binary_path = src_dir / "a.out"
-            if not binary_path.exists():
-                raise ValueError("a.out not found after running make")
-            target = src_dir / "main"
-            if target.exists():
-                target.unlink()
-            os.replace(binary_path, target)
-            os.chmod(target, target.stat().st_mode | 0o111)
+        submission_path: pathlib.Path,
+    ) -> BuildPlan:
+        strategy = BuildStrategy(meta.buildStrategy)
+        # Run the build helper for this submission so dispatcher can decide
+        # whether compile jobs are still needed.
+        logger().info(
+            f"[build] submission={submission_id} strategy={strategy.name}")
+        if strategy == BuildStrategy.COMPILE:
+            return BuildPlan(needs_make=False)
+        if strategy == BuildStrategy.MAKE_NORMAL:
+            return prepare_make_normal(
+                meta=meta,
+                submission_dir=submission_path,
+            )
+        if strategy == BuildStrategy.MAKE_INTERACTIVE:
+            return prepare_make_interactive(
+                meta=meta,
+                submission_dir=submission_path,
+            )
+        if strategy == BuildStrategy.MAKE_FUNCTION_ONLY:
+            return prepare_function_only_submission(
+                problem_id=problem_id,
+                meta=meta,
+                submission_dir=submission_path,
+            )
+        raise BuildStrategyError(f"unsupported build strategy: {strategy}")
 
     def handle(self, submission_id: str, problem_id: int):
         """
@@ -278,37 +249,38 @@ class Dispatcher(threading.Thread):
         self.locks[submission_id] = threading.Lock()
         self.compile_locks[submission_id] = threading.Lock()
         self.created_at[submission_id] = datetime.now()
-        if is_zip_mode:
-            self.zip_mode_submissions.add(submission_id)
-        if submission_config.executionMode == ExecutionMode.FUNCTION_ONLY:
-            self.function_only_submissions.add(submission_id)
+        self.build_strategies[submission_id] = submission_config.buildStrategy
 
-        if is_zip_mode:
-            try:
-                self.prepare_zip_submission(submission_id,
-                                            submission_config.language)
-            except ValueError as e:
-                logger().warning(
-                    f"prepare zip submission failed [id={submission_id}]: {e}")
-                self.release(submission_id)
-                raise
-        elif submission_config.executionMode == ExecutionMode.FUNCTION_ONLY:
-            try:
-                self.prepare_function_only_submission(
-                    submission_id=submission_id,
-                    problem_id=problem_id,
-                    meta=submission_config,
+        try:
+            build_plan = self._prepare_with_build_strategy(
+                submission_id=submission_id,
+                problem_id=problem_id,
+                meta=submission_config,
+                submission_path=submission_path,
+            )
+        except BuildStrategyError as exc:
+            logger().warning(
+                f"build strategy failed [id={submission_id}]: {exc}")
+            self.release(submission_id)
+            raise
+        needs_build = build_plan.needs_make
+        if needs_build:
+            logger().debug(f"[build] submission={submission_id} queued")
+            self.build_plans[submission_id] = build_plan
+            self.build_locks[submission_id] = threading.Lock()
+            self.queue.put_nowait(job.Build(submission_id=submission_id))
+        else:
+            if build_plan.finalize:
+                build_plan.finalize()
+            if not self.compile_need(submission_config.language):
+                logger().debug(
+                    f"[build] submission={submission_id} marked prebuilt"
                 )
-            except ValueError as e:
-                logger().warning(
-                    f"prepare function-only submission failed [id={submission_id}]: {e}"
-                )
-                self.release(submission_id)
-                raise
+                self.prebuilt_submissions.add(submission_id)
 
         logger().debug(f"current submissions: {[*self.result.keys()]}")
         try:
-            if (not self._is_prebuilt_submission(submission_id)
+            if (not needs_build and not self._is_prebuilt_submission(submission_id)
                     and self.compile_need(submission_config.language)):
                 self.queue.put_nowait(job.Compile(submission_id=submission_id))
             for i, task in enumerate(submission_config.tasks):
@@ -338,8 +310,10 @@ class Dispatcher(threading.Thread):
         ):
             if submission_id in v:
                 del v[submission_id]
-        self.zip_mode_submissions.discard(submission_id)
-        self.function_only_submissions.discard(submission_id)
+        self.prebuilt_submissions.discard(submission_id)
+        self.build_strategies.pop(submission_id, None)
+        self.build_plans.pop(submission_id, None)
+        self.build_locks.pop(submission_id, None)
 
     def run(self):
         self.do_run = True
@@ -369,6 +343,11 @@ class Dispatcher(threading.Thread):
                 continue
             # get task info
             submission_config, _ = self.result[submission_id]
+            if not isinstance(_job, job.Build) and self._is_build_pending(
+                    submission_id):
+                self.queue.put(_job)
+                time.sleep(0.1)
+                continue
             if isinstance(_job, job.Compile):
                 threading.Thread(
                     target=self.compile,
@@ -377,6 +356,12 @@ class Dispatcher(threading.Thread):
                         submission_config.language,
                     ),
                 ).start()
+            elif isinstance(_job, job.Build):
+                threading.Thread(
+                    target=self.build,
+                    args=(submission_id, submission_config.language),
+                ).start()
+                continue
             # if this submission needs compile and it haven't finished
             elif (not self._is_prebuilt_submission(submission_id)
                   and self.compile_need(submission_config.language)
@@ -444,6 +429,57 @@ class Dispatcher(threading.Thread):
             self.compile_results[submission_id] = res
             logger().debug(f'finish compiling, get status {res["Status"]}')
 
+    def build(
+        self,
+        submission_id: str,
+        lang: Language,
+    ):
+        plan = self.build_plans.get(submission_id)
+        if not plan:
+            return
+        lock = self.build_locks.get(submission_id)
+        if lock is None:
+            return
+        if lock.locked():
+            logger().error(
+                f"start a build thread on locked submission {submission_id}")
+            return
+        with lock:
+            logger().info(f"start building {submission_id}")
+            runner = SubmissionRunner(
+                submission_id=submission_id,
+                time_limit=-1,
+                mem_limit=-1,
+                testdata_input_path="",
+                testdata_output_path="",
+                lang=plan.lang_key or ["c11", "cpp17", "python3"][int(lang)],
+            )
+            res = runner.build_with_make()
+            if res.get("Status") != "AC":
+                self._handle_build_failure(
+                    submission_id=submission_id,
+                    message=res.get("Stderr") or "make failed",
+                )
+                return
+            try:
+                if plan.finalize:
+                    plan.finalize()
+            except BuildStrategyError as exc:
+                self._handle_build_failure(
+                    submission_id=submission_id,
+                    message=str(exc),
+                )
+                return
+            except Exception as exc:
+                self._handle_build_failure(
+                    submission_id=submission_id,
+                    message=f"build finalization failed: {exc}",
+                )
+                return
+            self.prebuilt_submissions.add(submission_id)
+            self.build_plans.pop(submission_id, None)
+            self.build_locks.pop(submission_id, None)
+
     def create_container(
         self,
         submission_id: str,
@@ -497,7 +533,7 @@ class Dispatcher(threading.Thread):
         try:
             return self.compile_results[submission_id]
         except KeyError:
-            if self._is_zip_submission(submission_id):
+            if self._is_prebuilt_submission(submission_id):
                 status = "AC"
             else:
                 status = "CE" if self.compile_need(lang) else "AC"

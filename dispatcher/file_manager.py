@@ -6,7 +6,7 @@ from pathlib import Path
 from . import config
 from .meta import Meta
 from .utils import logger
-from .constant import ExecutionMode, SubmissionMode
+from .constant import ExecutionMode, Language, SubmissionMode
 
 
 def extract(
@@ -31,7 +31,7 @@ def extract(
             and submission_mode == SubmissionMode.ZIP):
         raise ValueError('function-only submissions only accept code uploads')
     if submission_mode == SubmissionMode.ZIP:
-        _extract_zip_source(code_dir, source)
+        _extract_zip_source(code_dir, source, int(meta.language))
     else:
         _extract_code_source(code_dir, source, int(meta.language))
     # copy testdata
@@ -65,13 +65,18 @@ def _extract_code_source(code_dir: Path, source, language_id: int):
             raise ValueError('data type is not match')
 
 
-def _extract_zip_source(code_dir: Path, source):
+def _extract_zip_source(code_dir: Path, source, language_id: int):
     try:
         source.seek(0)
     except (OSError, AttributeError):
         pass
     with ZipFile(source) as zf:
         zf.extractall(code_dir)
+    if language_id == int(Language.PY):
+        main_py = code_dir / 'main.py'
+        if not main_py.exists():
+            raise ValueError('main.py not found in submission archive')
+        return
     makefile = code_dir / 'Makefile'
     if not makefile.exists():
         raise ValueError('Makefile not found in submission archive')
