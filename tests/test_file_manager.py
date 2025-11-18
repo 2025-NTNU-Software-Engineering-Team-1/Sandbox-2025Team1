@@ -6,15 +6,17 @@ import pytest
 
 from dispatcher import file_manager
 from dispatcher.meta import Meta
-from dispatcher.constant import SubmissionMode
+from dispatcher.constant import ExecutionMode, SubmissionMode
 
 
-def _build_meta(mode: SubmissionMode) -> Meta:
+def _build_meta(mode: SubmissionMode, execution_mode: ExecutionMode = ExecutionMode.GENERAL) -> Meta:
     return Meta.parse_obj({
         "language":
         1,
         "submissionMode":
         int(mode),
+        "executionMode":
+        int(execution_mode),
         "tasks": [{
             "taskScore": 100,
             "memoryLimit": 32768,
@@ -68,6 +70,23 @@ def test_extract_zip_submission_requires_makefile(tmp_path):
         file_manager.extract(
             root_dir=tmp_path,
             submission_id="zip-002",
+            meta=meta,
+            source=archive,
+            testdata=testdata_root,
+        )
+
+
+def test_function_only_rejects_zip_submission(tmp_path):
+    meta = _build_meta(SubmissionMode.ZIP, ExecutionMode.FUNCTION_ONLY)
+    testdata_root = tmp_path / "testdata"
+    _prepare_testdata(testdata_root)
+    archive = _build_zip({
+        "Makefile": "all:\n\t@true\n",
+    })
+    with pytest.raises(ValueError):
+        file_manager.extract(
+            root_dir=tmp_path,
+            submission_id="zip-func",
             meta=meta,
             source=archive,
             testdata=testdata_root,

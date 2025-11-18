@@ -6,7 +6,7 @@ from pathlib import Path
 from . import config
 from .meta import Meta
 from .utils import logger
-from .constant import SubmissionMode
+from .constant import ExecutionMode, SubmissionMode
 
 
 def extract(
@@ -26,6 +26,10 @@ def extract(
     code_dir = submission_dir / 'src'
     code_dir.mkdir()
     submission_mode = SubmissionMode(meta.submissionMode)
+    if (getattr(meta, 'executionMode', ExecutionMode.GENERAL)
+            == ExecutionMode.FUNCTION_ONLY
+            and submission_mode == SubmissionMode.ZIP):
+        raise ValueError('function-only submissions only accept code uploads')
     if submission_mode == SubmissionMode.ZIP:
         _extract_zip_source(code_dir, source)
     else:
