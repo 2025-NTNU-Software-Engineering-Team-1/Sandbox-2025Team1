@@ -151,9 +151,8 @@ def test_prepare_function_only_submission(monkeypatch, tmp_path):
         zf.writestr('Makefile', 'all:\n\t@touch a.out\n')
         zf.writestr('function.h', '// template')
     bundle_bytes = bundle.getvalue()
-    monkeypatch.setattr(
-        "dispatcher.build_strategy.fetch_problem_asset",
-        lambda problem_id, asset_type: bundle_bytes)
+    monkeypatch.setattr("dispatcher.build_strategy.fetch_problem_asset",
+                        lambda problem_id, asset_type: bundle_bytes)
 
     plan = prepare_function_only_submission(
         problem_id=1,
@@ -182,9 +181,8 @@ def test_prepare_function_only_python(monkeypatch, tmp_path):
         zf.writestr('student_impl.py', '# existing')
         zf.writestr('main.py', 'print("teacher")')
     bundle_bytes = bundle.getvalue()
-    monkeypatch.setattr(
-        "dispatcher.build_strategy.fetch_problem_asset",
-        lambda problem_id, asset_type: bundle_bytes)
+    monkeypatch.setattr("dispatcher.build_strategy.fetch_problem_asset",
+                        lambda problem_id, asset_type: bundle_bytes)
 
     plan = prepare_function_only_submission(
         problem_id=1,
@@ -239,19 +237,21 @@ def test_build_failure_clears_submission(monkeypatch, tmp_path):
         finalize=None,
     )
     dispatcher.queue.put(
-        dispatcher_job.Execute(submission_id=submission_id, task_id=0, case_id=0))
+        dispatcher_job.Execute(submission_id=submission_id,
+                               task_id=0,
+                               case_id=0))
 
     class DummyResp:
         ok = True
         status_code = 200
         text = "ok"
 
-    monkeypatch.setattr(
-        "dispatcher.dispatcher.requests.put", lambda *args, **kwargs: DummyResp())
-    monkeypatch.setattr(
-        "dispatcher.dispatcher.file_manager.clean_data", lambda *_: None)
-    monkeypatch.setattr(
-        "dispatcher.dispatcher.file_manager.backup_data", lambda *_: None)
+    monkeypatch.setattr("dispatcher.dispatcher.requests.put",
+                        lambda *args, **kwargs: DummyResp())
+    monkeypatch.setattr("dispatcher.dispatcher.file_manager.clean_data",
+                        lambda *_: None)
+    monkeypatch.setattr("dispatcher.dispatcher.file_manager.backup_data",
+                        lambda *_: None)
 
     def fake_build(self):
         return {

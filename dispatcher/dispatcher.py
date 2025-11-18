@@ -274,13 +274,13 @@ class Dispatcher(threading.Thread):
                 build_plan.finalize()
             if not self.compile_need(submission_config.language):
                 logger().debug(
-                    f"[build] submission={submission_id} marked prebuilt"
-                )
+                    f"[build] submission={submission_id} marked prebuilt")
                 self.prebuilt_submissions.add(submission_id)
 
         logger().debug(f"current submissions: {[*self.result.keys()]}")
         try:
-            if (not needs_build and not self._is_prebuilt_submission(submission_id)
+            if (not needs_build
+                    and not self._is_prebuilt_submission(submission_id)
                     and self.compile_need(submission_config.language)):
                 self.queue.put_nowait(job.Compile(submission_id=submission_id))
             for i, task in enumerate(submission_config.tasks):
@@ -343,8 +343,8 @@ class Dispatcher(threading.Thread):
                 continue
             # get task info
             submission_config, _ = self.result[submission_id]
-            if not isinstance(_job, job.Build) and self._is_build_pending(
-                    submission_id):
+            if not isinstance(
+                    _job, job.Build) and self._is_build_pending(submission_id):
                 self.queue.put(_job)
                 time.sleep(0.1)
                 continue

@@ -66,17 +66,15 @@ def prepare_function_only_submission(
     _reset_directory(src_dir)
     with zipfile.ZipFile(io.BytesIO(archive)) as zf:
         zf.extractall(src_dir)
-    template_name = (
-        "function.h"
-        if meta.language in (Language.C, Language.CPP)
-        else "student_impl.py"
-    )
+    template_name = ("function.h" if meta.language
+                     in (Language.C, Language.CPP) else "student_impl.py")
     template_path = src_dir / template_name
     template_path.parent.mkdir(parents=True, exist_ok=True)
     template_path.write_text(student_code)
 
     def finalize():
-        _finalize_function_only_artifacts(src_dir=src_dir, language=meta.language)
+        _finalize_function_only_artifacts(src_dir=src_dir,
+                                          language=meta.language)
 
     return BuildPlan(
         needs_make=True,

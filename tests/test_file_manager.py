@@ -16,10 +16,14 @@ def _build_meta(
     language: int = 1,
 ) -> Meta:
     return Meta.parse_obj({
-        "language": language,
-        "submissionMode": int(mode),
-        "executionMode": int(execution_mode),
-        "buildStrategy": build_strategy.value,
+        "language":
+        language,
+        "submissionMode":
+        int(mode),
+        "executionMode":
+        int(execution_mode),
+        "buildStrategy":
+        build_strategy.value,
         "tasks": [{
             "taskScore": 100,
             "memoryLimit": 32768,
@@ -45,7 +49,8 @@ def _prepare_testdata(root: Path):
 
 
 def test_extract_zip_submission(tmp_path):
-    meta = _build_meta(SubmissionMode.ZIP, build_strategy=BuildStrategy.MAKE_NORMAL)
+    meta = _build_meta(SubmissionMode.ZIP,
+                       build_strategy=BuildStrategy.MAKE_NORMAL)
     testdata_root = tmp_path / "testdata"
     _prepare_testdata(testdata_root)
     archive = _build_zip({
@@ -65,7 +70,8 @@ def test_extract_zip_submission(tmp_path):
 
 
 def test_extract_zip_submission_requires_makefile(tmp_path):
-    meta = _build_meta(SubmissionMode.ZIP, build_strategy=BuildStrategy.MAKE_NORMAL)
+    meta = _build_meta(SubmissionMode.ZIP,
+                       build_strategy=BuildStrategy.MAKE_NORMAL)
     testdata_root = tmp_path / "testdata"
     _prepare_testdata(testdata_root)
     archive = _build_zip({"helper.c": "int main(){return 0;}"})

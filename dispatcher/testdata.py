@@ -90,7 +90,8 @@ def get_problem_meta(problem_id: int, language: Language) -> Meta:
             "makeFunctionOnly": BuildStrategy.MAKE_FUNCTION_ONLY.value,
             "makeInteractive": BuildStrategy.MAKE_INTERACTIVE.value,
         }
-        build_strategy = mapping.get(build_strategy, BuildStrategy.COMPILE.value)
+        build_strategy = mapping.get(build_strategy,
+                                     BuildStrategy.COMPILE.value)
     obj["buildStrategy"] = int(build_strategy)
     obj.setdefault("assetPaths", {})
     obj.setdefault("teacherFirst", False)
