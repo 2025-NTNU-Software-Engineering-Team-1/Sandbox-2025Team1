@@ -8,7 +8,7 @@ def logger() -> logging.Logger:
     try:
         return current_app.logger
     except RuntimeError:
-        return logging.getLogger('gunicorn.error')
+        return logging.getLogger("gunicorn.error")
 
 
 # Fake redis server
@@ -16,8 +16,8 @@ server = None
 # Redis connection pool
 redis_pool = None
 REDIS_URL = os.getenv(
-    'REDIS_URL',
-    'redis://redis:6379/14',
+    "REDIS_URL",
+    "redis://redis:6379/14",
 )
 
 

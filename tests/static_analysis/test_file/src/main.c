@@ -8,6 +8,8 @@
 #include <time.h>       // clock, CLOCKS_PER_SEC
 #include <assert.h>     // assert
 #include <errno.h>      // errno
+#include <stdio.h>
+#include <cstddef>
 
 static int cmp_int_asc (const void *a , const void *b) {
     const int ia = *(const int *)a , ib = *(const int *)b;

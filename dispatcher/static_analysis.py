@@ -28,8 +28,6 @@ def detect_include_args():
     # try these path
     args += ["-I/usr/include", "-I/usr/include/x86_64-linux-gnu"]
 
-    # for debug
-    # print(args)
     return args
 
 
@@ -46,93 +44,33 @@ class AnalysisResult:
     write analysis report
     """
 
-    def __init__(self,
-                 success=True,
-                 message="",
-                 rules="",
-                 facts="",
-                 violations=""):
+    def __init__(self, success=True, message="", rules="", facts=""):
         self._success = success
         self.message = message
-        self.rules = rules
-        self.facts = facts
-        self.violations = violations
+        self.json_result = {}
 
     def is_success(self):
         return self._success
 
-    def good_look_output_rules(self, rules: dict):
-        if not rules:
-            rules_str = "No rules applied."
-            return rules_str
-        rules_items = []
-        max_key_len = max(len(key) for key in rules.keys()) + 1
-        for key, value in rules.items():
-            if isinstance(value, list):
-                value_str = self._format_list_value(key, value, max_key_len)
-            else:
-                value_str = self._format_scalar_value(value)
-            rules_items.append(f"  {key.ljust(max_key_len)}: {value_str}")
+    def set_violations(self, structured_violations: dict):
+        # json format
+        self.json_result = structured_violations
 
-        rules_str = "\n".join(rules_items)
-        self.rules += f"\n------------------------------ Applied Rules ------------------------------"
-        self.rules += f"\n{rules_str}\n"
-        # self.rules += f"\n---------------------------------------------------------------------------"
+        msg = "\n-------------------------- Static Analysis Result -------------------------"
 
-        return rules_str
+        for item, lines in structured_violations.items():
+            if item == "model":
+                continue
+            if not lines:
+                continue
+            msg += f"\n [Category: {item}]"
+            for line in lines:
+                msg += f"\n    Line {line['line']:<4} : {line['content']}"
 
-    def good_look_output_facts(self, facts: dict):
-        facts_items = []
-        max_key_len = max(len(key) for key in facts.keys()) + 1
+        self.message += msg
 
-        for key, value in facts.items():
-            if isinstance(value, (list, set)):
-                value_str = self._format_list_value(key, value, max_key_len)
-            else:
-                value_str = self._format_scalar_value(value)
-            facts_items.append(f"  {key.ljust(max_key_len)}: {value_str}")
-        facts_str = "\n".join(facts_items)
-        self.facts += f"\n----------------------------- Collected Facts -----------------------------"
-        self.facts += f"\n{facts_str}"
-        # self.facts += f"\n---------------------------------------------------------------------------"
-
-    def good_look_output_violations(self, violations: dict):
-        violations_items = []
-        max_key_len = max(len(key) for key in violations.keys()) + 1
-
-        for key, value in violations.items():
-            value_str = self._format_list_value(key, value, max_key_len)
-            violations_items.append(f"  {key.ljust(max_key_len)}: {value_str}")
-
-        violations_str = "\n".join(violations_items)
-
-        self.violations += f"\n-------------------------- Static Analysis Failed -------------------------"
-        self.violations += f"\n{violations_str}\n"
-        # self.violations += f"\n---------------------------------------------------------------------------"
-
-    def _format_scalar_value(self, value) -> str:
-        if value == "black":
-            return "Disallow"
-        if value == "white":
-            return "Only Allow"
-        return str(value)
-
-    def _format_list_value(self, key: str, value_list: list,
-                           max_key_len: int) -> str:
-        if not value_list:
-            return "(empty)"
-        value_list = sorted(value_list)
-        str_values = [str(v) for v in value_list]
-        chunk_size = 5
-        if len(str_values) <= chunk_size:
-            return ", ".join(str_values)
-        chunks = [
-            str_values[i:i + chunk_size]
-            for i in range(0, len(str_values), chunk_size)
-        ]
-        joined_chunks = [", ".join(chunk) for chunk in chunks]
-        line_indent = " " * (2 + max_key_len + 2)
-        return f"\n{line_indent}".join(joined_chunks)
+    def to_json_str(self):
+        return json.dumps(self.json_result, indent=4)
 
 
 class StaticAnalyzer:
@@ -151,7 +89,8 @@ class StaticAnalyzer:
         main Analyzer
         """
         ## for debug
-        # source_code_path = pathlib.Path(submission_id).resolve()
+        # source_code_path = pathlib.Path(submission_id)
+        # source_code_path = (source_code_path / "src").resolve()
         ## for real use
         submission_cfg = dispatcher_config.get_submission_config()
         working_dir = pathlib.Path(submission_cfg["working_dir"])
@@ -161,7 +100,6 @@ class StaticAnalyzer:
         if not isinstance(rules, dict):
             rules = {}
         try:
-            self.result.good_look_output_rules(rules)
             if language == Language.PY:
                 self._analyze_python(source_code_path, rules)
 
@@ -209,32 +147,34 @@ class StaticAnalyzer:
         # (1) Ast + facts result
         try:
             tree = ast.parse(content)
-            def_visitor = FunctionDefVisitor()
+
+            def_visitor = DefinitionVisitor()
             def_visitor.visit(tree)
-            user_defined_functions = def_visitor.defined_functions
-            visitor = PythonAstVisitor(
-                user_defined_functions=user_defined_functions)
+
+            global_funcs = def_visitor.global_functions
+            classes_info = def_visitor.defined_classes
+
+            visitor = PythonAstVisitor(global_functions=global_funcs,
+                                       defined_classes=classes_info)
             visitor.visit(tree)
+            visitor.detect_cycles()
             facts = visitor.facts
         except SyntaxError as e:
             self.result._success = False
             self.result.message += f"\nSyntax Error could not analyze:\n{e}"
             return self.result
         logger().debug(f"Python analysis facts: {facts}")
-        # for debug
-        # print(facts)
         # (2) fact vs rules
-        violations = self.get_violations(facts, rules, Language.PY)
+        violations_dict = self.get_violations(facts, rules, Language.PY)
         # (3) Result
-        if violations:
+        if violations_dict:
             logger().debug("Static analysis failed.")
             self.result._success = False
-            self.result.good_look_output_violations(violations)
+            self.result.set_violations(violations_dict)
         else:
             self.result._success = True
             self.result.message += f"\nGOOD JOB, passed static analysis."
 
-        self.result.good_look_output_facts(facts)
         return self.result
 
     def _analyze_c_cpp(self, source_path: pathlib.Path, rules: dict,
@@ -245,9 +185,6 @@ class StaticAnalyzer:
         main_c_path = source_path / "main.c"  # C
         main_cpp_path = source_path / "main.cpp"  # C++
 
-        # debug
-        # print(main_c_path)
-        # print(main_cpp_path)
         target_path = None
         if main_c_path.exists():
             target_path = main_c_path
@@ -257,8 +194,6 @@ class StaticAnalyzer:
             raise StaticAnalysisError(
                 f"Not found 'main.c' or 'main.cpp'.  Source path: {source_path}"
             )
-        # debug
-        # print(target_path)
 
         # (1) Ast + facts result
         try:
@@ -284,111 +219,138 @@ class StaticAnalyzer:
             self.result.message += "[Syntax Error] Clang could not analyze"
             return self.result
 
-        facts = {
-            "headers": set(),
-            "function_calls": set(),
-            "for_loops": [],
-            "while_loops": [],
-            "recursive_calls": [],
-        }
-        analyze_c_ast(translation_unit.cursor, facts, set(), str(target_path))
+        visitor = CppAstVisitor(str(target_path))
+        visitor.visit(translation_unit.cursor)
+        visitor.detect_cycles()
+
+        facts = visitor.facts
         logger().debug(f"C/C++ analysis facts: {facts}")
-        # for debug
-        # print(facts)
-        # (2) fact vs rules
-        violations = self.get_violations(facts, rules, language)
+
+        violations_dict = self.get_violations(facts, rules, language)
 
         # (3) Result
-        if violations:
+        if violations_dict:
             logger().debug("Static analysis failed.")
             self.result._success = False
-            self.result.good_look_output_violations(violations)
+            self.result.set_violations(violations_dict)
         else:
             self.result._success = True
             self.result.message += f"\nGOOD JOB, passed static analysis."
 
-        self.result.good_look_output_facts(facts)
         return self.result
 
     def get_violations(self, facts: dict, rules: dict,
                        language: Language) -> dict:
-        violations_dict = {}
+        """
+        return structured violations dict
+        example:
+        {
+            "model": "black",
+            "syntax": [{"content": "while", "line": 10}, ...],
+            "headers": [...],
+            "functions": [...]
+        }
+        """
         model = rules.get("model", "black")
+        violations_structure = {
+            "model": model,
+            "syntax": [],
+            "headers": [],  # C/CPP
+            "imports": [],  # PY
+            "functions": [],
+        }
 
+        # import / header check
         if language == Language.PY:
-            list_violation = self._check_list_violations(
-                facts["imports"], rules.get("imports", []), model, "Imports")
-            if list_violation:
-                violations_dict[list_violation[0]] = list_violation[1]
+            violations_structure["imports"] = self._check_items(
+                facts["imports"], rules.get("imports", []), model)
+            del violations_structure["headers"]  # PY not use headers
         else:
-            list_violation = self._check_list_violations(
-                facts["headers"], rules.get("headers", []), model, "Headers")
-            if list_violation:
-                violations_dict[list_violation[0]] = list_violation[1]
+            violations_structure["headers"] = self._check_items(
+                facts["headers"], rules.get("headers", []), model)
+            del violations_structure["imports"]  # C/CPP not use imports
 
-        syntax_violations_list = self._check_syntax_violations(
-            facts, rules.get("syntax", []), model)
-        for key, lines in syntax_violations_list:
-            violations_dict[key] = lines
+        # function call check
+        violations_structure["functions"] = self._check_items(
+            facts["function_calls"], rules.get("functions", []), model)
+        # syntax check
+        violations_structure["syntax"] = self._check_items(
+            facts["syntax"], rules.get("syntax", []), model)
 
-        list_violation = self._check_list_violations(
-            facts["function_calls"], rules.get("functions", []), model,
-            "Functions")
-        if list_violation:
-            violations_dict[list_violation[0]] = list_violation[1]
+        has_violations = False
+        for key, items in violations_structure.items():
+            if key == "model":
+                continue
+            if items:
+                has_violations = True
+                break
+        if not has_violations:
+            return {}
+        return violations_structure
 
-        return violations_dict
-
-    def _check_list_violations(self, used_items: set, rule_items: list,
-                               model: str, item_type: str) -> tuple | None:
+    def _check_items(self, used_items: list, rule_items: list,
+                     model: str) -> list:
+        """
+        used_items: [{"name": "sort", "line": 10}, ...]
+        rule_items: ["sort", "vector"]
+        return: [{"content": "sort", "line": 10}, ...]
+        """
+        violations = []
         rule_set = set(rule_items)
 
-        if model == "black":
-            violations_found = used_items.intersection(rule_set)
-            if violations_found:
-                return (f"Disallowed {item_type}",
-                        sorted(list(violations_found)))
-        elif model == "white":
-            violations_found = used_items.difference(rule_set)
-            if violations_found:
-                return (f"Non-whitelisted {item_type}",
-                        sorted(list(violations_found)))
+        for item in used_items:
+            name = item["name"]
+            lineno = item["line"]
 
-        return None
+            is_violation = False
 
-    def _check_syntax_violations(self, facts: dict, rule_syntax: list,
-                                 model: str) -> list:
-        violations_data = []
-        rule_set = set(rule_syntax)
-        syntax_checks = {
-            "for": ("for_loops", "For Loop"),
-            "while": ("while_loops", "While Loop"),
-            "recursive": ("recursive_calls", "Recursive Call"),
-        }
-        for syntax_key, (fact_key, message) in syntax_checks.items():
-            lines = facts.get(fact_key, [])
-            if not lines:
-                continue
             if model == "black":
-                if syntax_key in rule_set:
-                    violations_data.append((f"Disallowed {message}", lines))
+                if name in rule_set:
+                    is_violation = True
+                else:
+                    for rule in rule_set:
+                        if name.endswith("." + rule):
+                            is_violation = True
+                            break
 
             elif model == "white":
-                if syntax_key not in rule_set:
-                    violations_data.append(
-                        (f"Non-whitelisted {message}", lines))
+                is_allowed = False
+                if name in rule_set:
+                    is_allowed = True
+                else:
+                    for rule in rule_set:
+                        if name.endswith("." + rule):
+                            is_allowed = True
+                            break
 
-        return violations_data
+                if not is_allowed:
+                    is_violation = True
+
+            if is_violation:
+                violations.append({"content": name, "line": lineno})
+
+        return violations
 
 
-class FunctionDefVisitor(ast.NodeVisitor):
+class DefinitionVisitor(ast.NodeVisitor):
 
     def __init__(self):
-        self.defined_functions = set()
+        self.global_functions = set()
+        self.defined_classes = {}
 
     def visit_FunctionDef(self, node):
-        self.defined_functions.add(node.name)
+        self.global_functions.add(node.name)
         self.generic_visit(node)
+
+    def visit_ClassDef(self, node):
+        class_name = node.name
+        methods = set()
+
+        for item in node.body:
+            if isinstance(item, ast.FunctionDef):
+                methods.add(item.name)
+
+        self.defined_classes[class_name] = methods
 
 
 class PythonAstVisitor(ast.NodeVisitor):
@@ -396,124 +358,277 @@ class PythonAstVisitor(ast.NodeVisitor):
     for python analyze
     """
 
-    def __init__(self, user_defined_functions: set):
+    def __init__(self, global_functions: set, defined_classes: dict):
         # log used "fact"
-        self.facts = {
-            "imports": set(),
-            "function_calls": set(),
-            "for_loops": [],
-            "while_loops": [],
-            "recursive_calls": [],
-        }
+        self.facts = {"imports": [], "function_calls": [], "syntax": []}
 
         # for recursive check
         self.current_function_stack = []
-        self.user_defined_functions = user_defined_functions
+        self.global_functions = global_functions
+        self.defined_classes = defined_classes
+        self.variable_types = {}
+        self.call_graph = {}
 
     def _get_full_call_name(self, func_node: ast.AST) -> str | None:
         if isinstance(func_node, ast.Name):
             return func_node.id
-
         if isinstance(func_node, ast.Attribute):
             base_name = self._get_full_call_name(func_node.value)
             if base_name:
                 return f"{base_name}.{func_node.attr}"
             else:
                 return func_node.attr
-
         return None
 
     def visit_Import(self, node):
         for alias in node.names:
-            self.facts["imports"].add(alias.name)
+            self.facts["imports"].append({
+                "name": alias.name,
+                "line": node.lineno
+            })
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node):
         if node.module:
-            self.facts["imports"].add(node.module)
+            self.facts["imports"].append({
+                "name": node.module,
+                "line": node.lineno
+            })
         self.generic_visit(node)
 
     def visit_For(self, node):
-        self.facts["for_loops"].append(node.lineno)
+        self.facts["syntax"].append({"name": "for", "line": node.lineno})
         self.generic_visit(node)
 
     def visit_While(self, node):
-        self.facts["while_loops"].append(node.lineno)
+        self.facts["syntax"].append({"name": "while", "line": node.lineno})
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node):
         current_function_name = node.name
         self.current_function_stack.append(current_function_name)
+
+        if current_function_name not in self.call_graph:
+            self.call_graph[current_function_name] = []
+
         self.generic_visit(node)
         self.current_function_stack.pop()
 
-    def visit_Call(self, node):
-        function_name_called = self._get_full_call_name(node.func)
+    def visit_Assign(self, node):
+        right_side_class = None
+        if isinstance(node.value, ast.Call):
+            func_name = self._get_full_call_name(node.value.func)
+            if func_name in self.defined_classes:
+                right_side_class = func_name
 
-        if not function_name_called:
-            self.generic_visit(node)
-            return
-
-        is_user_defined = function_name_called in self.user_defined_functions
-
-        if function_name_called and not is_user_defined:
-            self.facts["function_calls"].add(function_name_called)
-
-        if (is_user_defined and self.current_function_stack
-                and function_name_called in self.current_function_stack):
-            self.facts["recursive_calls"].append(node.lineno)
+        if right_side_class:
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    var_name = target.id
+                    self.variable_types[var_name] = right_side_class
 
         self.generic_visit(node)
 
+    def visit_Call(self, node):
+        full_call_name = self._get_full_call_name(node.func)
+        if not full_call_name:
+            self.generic_visit(node)
+            return
 
-def analyze_c_ast(node, facts, call_stack: set, main_file_path: str):
-    if node.kind == clang.cindex.CursorKind.INCLUSION_DIRECTIVE:
-        if node.location.file and node.location.file.name == main_file_path:
-            facts["headers"].add(node.displayname)
-        return
-    in_main = (node.location and node.location.file
-               and node.location.file.name == main_file_path)
+        if "." in full_call_name:
+            called_func_name = full_call_name.rsplit(".", 1)[-1]
+        else:
+            called_func_name = full_call_name
 
-    if in_main:
+        is_user_defined = False
+
+        if full_call_name in self.global_functions:
+            is_user_defined = True
+
+        elif "." in full_call_name:
+            parts = full_call_name.rsplit(".", 1)
+            if len(parts) == 2:
+                obj_name, method_name = parts
+
+                obj_type = self.variable_types.get(obj_name)
+                if obj_type and obj_type in self.defined_classes:
+                    if method_name in self.defined_classes[obj_type]:
+                        is_user_defined = True
+
+                if obj_name == "self":
+                    # simple method call within class
+                    is_user_defined = True
+
+        if is_user_defined:
+            if (self.current_function_stack
+                    and called_func_name in self.current_function_stack):
+                self.facts["syntax"].append({
+                    "name": "recursive",
+                    "line": node.lineno
+                })
+
+            if self.current_function_stack:
+                caller = self.current_function_stack[-1]
+                callee = called_func_name
+
+                if caller not in self.call_graph:
+                    self.call_graph[caller] = []
+                self.call_graph[caller].append((callee, node.lineno))
+
+        else:
+            self.facts["function_calls"].append({
+                "name": full_call_name,
+                "line": node.lineno
+            })
+        self.generic_visit(node)
+
+    def detect_cycles(self):
+        visited = set()
+        recursion_stack = set()
+
+        def dfs(u):
+            visited.add(u)
+            recursion_stack.add(u)
+
+            if u in self.call_graph:
+                for v, lineno in self.call_graph[u]:
+                    if v not in visited:
+                        dfs(v)
+                    elif v in recursion_stack:
+                        already_reported = False
+                        for item in self.facts["syntax"]:
+                            if item["name"] == "recursive" and item[
+                                    "line"] == lineno:
+                                already_reported = True
+                                break
+                        if not already_reported:
+                            self.facts["syntax"].append({
+                                "name": "recursive",
+                                "line": lineno
+                            })
+
+            recursion_stack.remove(u)
+
+        for node in list(self.call_graph.keys()):
+            if node not in visited:
+                dfs(node)
+
+
+class CppAstVisitor:
+
+    def __init__(self, main_file_path: str):
+        self.main_file_path = main_file_path
+        self.facts = {
+            "headers": [],
+            "function_calls": [],
+            "syntax": [],
+        }
+        self.call_graph = {}
+        self.usr_to_name = {}
+
+    def visit(self, node, current_function_usr=None):
+        if node.kind == clang.cindex.CursorKind.INCLUSION_DIRECTIVE:
+            if str(node.location.file) == self.main_file_path:
+                self.facts["headers"].append({
+                    "name": node.spelling,
+                    "line": node.location.line
+                })
+            return
+
+        in_main = (node.location and node.location.file
+                   and str(node.location.file) == self.main_file_path)
+
         if node.kind in (
-                clang.cindex.CursorKind.FOR_STMT,
-                clang.cindex.CursorKind.CXX_FOR_RANGE_STMT,
+                clang.cindex.CursorKind.FUNCTION_DECL,
+                clang.cindex.CursorKind.CXX_METHOD,
+                clang.cindex.CursorKind.CONSTRUCTOR,
+                clang.cindex.CursorKind.DESTRUCTOR,
         ):
-            facts["for_loops"].append(node.location.line)
+            if node.is_definition():
+                current_function_usr = node.get_usr()
+                self.usr_to_name[current_function_usr] = node.spelling
 
-        elif node.kind == clang.cindex.CursorKind.WHILE_STMT:
-            facts["while_loops"].append(node.location.line)
+                if current_function_usr not in self.call_graph:
+                    self.call_graph[current_function_usr] = []
 
-        elif node.kind == clang.cindex.CursorKind.CALL_EXPR:
-            callee = node.referenced
-            is_user_defined_in_main = False
-            if callee and callee.location and callee.location.file:
-                is_user_defined_in_main = callee.location.file.name == main_file_path
-
-            if not is_user_defined_in_main:
-                if callee and callee.spelling:
-                    facts["function_calls"].add(callee.spelling)
-                else:
-                    name = node.spelling or node.displayname
-                    if name:
-                        facts["function_calls"].add(name)
-
-            callee_usr = callee.get_usr() if callee else None
-            if callee_usr and callee_usr in call_stack:
-                facts["recursive_calls"].append(node.location.line)
-
-    if node.kind == clang.cindex.CursorKind.FUNCTION_DECL:
-        func_usr = node.get_usr()
-        added_to_stack = False
-        if func_usr:
-            added_to_stack = True
-            call_stack.add(func_usr)
+        if in_main:
+            if node.kind in (
+                    clang.cindex.CursorKind.FOR_STMT,
+                    clang.cindex.CursorKind.CXX_FOR_RANGE_STMT,
+            ):
+                self.facts["syntax"].append({
+                    "name": "for",
+                    "line": node.location.line
+                })
+            elif node.kind == clang.cindex.CursorKind.WHILE_STMT:
+                self.facts["syntax"].append({
+                    "name": "while",
+                    "line": node.location.line
+                })
+            elif node.kind in (
+                    clang.cindex.CursorKind.CALL_EXPR,
+                    clang.cindex.CursorKind.MEMBER_REF_EXPR,
+            ):
+                if "operator" not in node.spelling:
+                    self._handle_call(node, current_function_usr)
 
         for child in node.get_children():
-            analyze_c_ast(child, facts, call_stack, main_file_path)
+            self.visit(child, current_function_usr)
 
-        if added_to_stack:
-            call_stack.remove(func_usr)
-    else:
-        for child in node.get_children():
-            analyze_c_ast(child, facts, call_stack, main_file_path)
+    def _handle_call(self, node, caller_usr):
+        callee = node.referenced
+        if callee is None:
+            return
+        callee_usr = callee.get_usr()
+        callee_name = callee.spelling
+
+        callee_file = None
+        if callee.location and callee.location.file:
+            callee_file = str(callee.location.file)
+
+        is_system = True
+        if callee_file == self.main_file_path:
+            is_system = False
+        if is_system:
+            if callee_name:
+                self.facts["function_calls"].append({
+                    "name": callee_name,
+                    "line": node.location.line
+                })
+        else:
+            if caller_usr:
+                if caller_usr not in self.call_graph:
+                    self.call_graph[caller_usr] = []
+                self.call_graph[caller_usr].append(
+                    (callee_usr, node.location.line))
+
+    def detect_cycles(self):
+        visited = set()
+        recursion_stack = set()
+
+        def dfs(u):
+            visited.add(u)
+            recursion_stack.add(u)
+
+            if u in self.call_graph:
+                for v, lineno in self.call_graph[u]:
+                    if v not in visited:
+                        dfs(v)
+                    elif v in recursion_stack:
+                        already_reported = False
+                        for item in self.facts["syntax"]:
+                            if item["name"] == "recursive" and item[
+                                    "line"] == lineno:
+                                already_reported = True
+                                break
+                        if not already_reported:
+                            self.facts["syntax"].append({
+                                "name": "recursive",
+                                "line": lineno
+                            })
+
+            recursion_stack.remove(u)
+
+        for node in list(self.call_graph.keys()):
+            if node not in visited:
+                dfs(node)
