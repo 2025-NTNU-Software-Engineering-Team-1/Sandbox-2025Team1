@@ -5,6 +5,9 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# for static analysis c libclang 
+RUN apk add --no-cache clang-dev
+
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 

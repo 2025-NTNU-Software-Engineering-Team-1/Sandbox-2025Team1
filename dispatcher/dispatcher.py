@@ -8,7 +8,6 @@ import queue
 import textwrap
 import shutil
 from datetime import datetime
-
 from runner.submission import SubmissionRunner
 from . import job, file_manager, config
 from .exception import *
@@ -16,13 +15,17 @@ from .meta import Meta
 from .constant import Language
 from .utils import logger
 
+from .pipeline import fetch_problem_rules
+
+from .static_analysis import StaticAnalyzer, StaticAnalysisError, AnalysisResult
+
 
 class Dispatcher(threading.Thread):
 
     def __init__(
         self,
-        dispatcher_config='.config/dispatcher.json',
-        submission_config='.config/submission.json',
+        dispatcher_config=".config/dispatcher.json",
+        submission_config=".config/submission.json",
     ):
         super().__init__()
         self.testing = False
@@ -50,9 +53,17 @@ class Dispatcher(threading.Thread):
         self.container_count = 0
         # read cwd from submission runner config
         s_config = config.get_submission_config(submission_config)
-        self.submission_runner_cwd = pathlib.Path(s_config['working_dir'])
+        self.submission_runner_cwd = pathlib.Path(s_config["working_dir"])
         self.timeout = 300
         self.created_at = {}
+
+        # static analysis
+        self.sa_results = {}
+        self.sa_done = set()
+        self.sa_locks = {}
+
+        # ac code paths
+        self.teacher_ac_paths = {}
 
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}
@@ -101,24 +112,25 @@ class Dispatcher(threading.Thread):
             else:
                 raise
 
-    def handle(self, submission_id: str):
-        '''
+    def handle(self, submission_id: str, problem_id: int):
+        """
         handle a submission, save its config and push into task queue
-        '''
-        logger().info(f'receive submission {submission_id}.')
+        """
+        logger().info(
+            f"receive submission {submission_id} for problem: {problem_id}.")
         submission_path = self.SUBMISSION_DIR / submission_id
         # check whether the submission directory exist
         if not submission_path.exists():
             raise FileNotFoundError(
-                f'submission id: {submission_id} file not found.')
+                f"submission id: {submission_id} file not found.")
         elif not submission_path.is_dir():
-            raise NotADirectoryError(f'{submission_path} is not a directory')
+            raise NotADirectoryError(f"{submission_path} is not a directory")
         # duplicated
         if self.contains(submission_id):
             raise DuplicatedSubmissionIdError(
-                f'duplicated submission id {submission_id}.')
+                f"duplicated submission id {submission_id}.")
         # read submission meta
-        with (submission_path / 'meta.json').open() as f:
+        with (submission_path / "meta.json").open() as f:
             submission_config = Meta.parse_obj(json.load(f))
 
         # assign submission context
@@ -127,14 +139,15 @@ class Dispatcher(threading.Thread):
         self.locks[submission_id] = threading.Lock()
         self.compile_locks[submission_id] = threading.Lock()
         self.created_at[submission_id] = datetime.now()
+        self.sa_locks[submission_id] = threading.Lock()
 
-        logger().debug(f'current submissions: {[*self.result.keys()]}')
+        logger().debug(f"current submissions: {[*self.result.keys()]}")
         try:
             if self.compile_need(submission_config.language):
                 self.queue.put_nowait(job.Compile(submission_id=submission_id))
             for i, task in enumerate(submission_config.tasks):
                 for j in range(task.caseCount):
-                    case_no = f'{i:02d}{j:02d}'
+                    case_no = f"{i:02d}{j:02d}"
                     task_content[case_no] = None
                     _job = job.Execute(
                         submission_id=submission_id,
@@ -147,26 +160,30 @@ class Dispatcher(threading.Thread):
             raise e
 
     def release(self, submission_id: str):
-        '''
+        """
         Release variable about submission
-        '''
+        """
         for v in (
                 self.result,
                 self.compile_locks,
                 self.compile_results,
                 self.locks,
                 self.created_at,
+                self.sa_locks,
+                self.sa_results,
         ):
             if submission_id in v:
                 del v[submission_id]
 
+        self.sa_done.discard(submission_id)
+
     def run(self):
         self.do_run = True
-        logger().debug('start dispatcher loop')
+        logger().debug("start dispatcher loop")
         while True:
             # end the loop
             if not self.do_run:
-                logger().debug('exit dispatcher loop')
+                logger().debug("exit dispatcher loop")
                 break
             # no testcase need to be run
             if self.queue.empty():
@@ -181,14 +198,23 @@ class Dispatcher(threading.Thread):
             submission_id = _job.submission_id
             # if a submission was discarded, it will not appear in the `self.result`
             if not self.contains(submission_id):
-                logger().info(f'discarded submission [id={submission_id}]')
+                logger().info(f"discarded submission [id={submission_id}]")
                 continue
             if self.is_timed_out(submission_id):
-                logger().info(f'submission timed out [id={submission_id}]')
+                logger().info(f"submission timed out [id={submission_id}]")
                 continue
             # get task info
             submission_config, _ = self.result[submission_id]
+            problem_id = submission_config.problem_id
             if isinstance(_job, job.Compile):
+                # static analysis executed before compile
+                # [Start] Static Analysis
+                try:
+                    self.do_static_analysis(submission_id, problem_id)
+                except Exception:
+                    logger().warning(
+                        f"static analysis failed for submission {submission_id}",
+                    )
                 threading.Thread(
                     target=self.compile,
                     args=(
@@ -197,24 +223,33 @@ class Dispatcher(threading.Thread):
                     ),
                 ).start()
             # if this submission needs compile and it haven't finished
-            elif self.compile_need(submission_config.language) \
-                and self.compile_results.get(submission_id) is None:
+            elif (self.compile_need(submission_config.language)
+                  and self.compile_results.get(submission_id) is None):
                 self.queue.put(_job)
             else:
+                # ensure static analysis took place
+                if submission_id not in self.sa_done:
+                    try:
+                        self.do_static_analysis(submission_id, problem_id)
+                    except Exception:
+                        logger().warning(
+                            f"static analysis failed for submission {submission_id}",
+                        )
+
                 task_info = submission_config.tasks[_job.task_id]
-                case_no = f'{_job.task_id:02d}{_job.case_id:02d}'
+                case_no = f"{_job.task_id:02d}{_job.case_id:02d}"
                 logger().info(
-                    f'create container [task={submission_id}/{case_no}]')
-                logger().debug(f'task info: {task_info}')
+                    f"create container [task={submission_id}/{case_no}]")
+                logger().debug(f"task info: {task_info}")
                 # output path should be the container path
-                base_path = self.SUBMISSION_DIR / submission_id / 'testcase'
-                out_path = str((base_path / f'{case_no}.out').absolute())
+                base_path = self.SUBMISSION_DIR / submission_id / "testcase"
+                out_path = str((base_path / f"{case_no}.out").absolute())
                 # input path should be the host path
-                base_path = self.submission_runner_cwd / submission_id / 'testcase'
-                in_path = str((base_path / f'{case_no}.in').absolute())
+                base_path = self.submission_runner_cwd / submission_id / "testcase"
+                in_path = str((base_path / f"{case_no}.in").absolute())
                 # debug log
-                logger().debug('in path: ' + in_path)
-                logger().debug('out path: ' + out_path)
+                logger().debug("in path: " + in_path)
+                logger().debug("out path: " + out_path)
                 # assign a new runner
                 threading.Thread(
                     target=self.create_container,
@@ -240,24 +275,24 @@ class Dispatcher(threading.Thread):
         # another thread is compiling this submission, bye
         if self.compile_locks[submission_id].locked():
             logger().error(
-                f'start a compile thread on locked submission {submission_id}')
+                f"start a compile thread on locked submission {submission_id}")
             return
         # this submission should not be compiled!
         if not self.compile_need(lang):
             logger().warning(
-                f'try to compile submission {submission_id}'
-                f' with language {lang}', )
+                f"try to compile submission {submission_id}"
+                f" with language {lang}", )
             return
         # compile this submission. don't forget to acquire the lock
         with self.compile_locks[submission_id]:
-            logger().info(f'start compiling {submission_id}')
+            logger().info(f"start compiling {submission_id}")
             res = SubmissionRunner(
                 submission_id=submission_id,
                 time_limit=-1,
                 mem_limit=-1,
-                testdata_input_path='',
-                testdata_output_path='',
-                lang=['c11', 'cpp17'][int(lang)],
+                testdata_input_path="",
+                testdata_output_path="",
+                lang=["c11", "cpp17"][int(lang)],
             ).compile()
             self.compile_results[submission_id] = res
             logger().debug(f'finish compiling, get status {res["Status"]}')
@@ -272,7 +307,7 @@ class Dispatcher(threading.Thread):
         case_out_path: str,
         lang: Language,
     ):
-        lang = ['c11', 'cpp17', 'python3'][int(lang)]
+        lang = ["c11", "cpp17", "python3"][int(lang)]
         runner = SubmissionRunner(
             submission_id,
             time_limit,
@@ -283,40 +318,40 @@ class Dispatcher(threading.Thread):
         )
         res = self.extract_compile_result(submission_id, lang)
         # Execute if compile successfully
-        if res['Status'] != 'CE':
+        if res["Status"] != "CE":
             try:
                 self.inc_container()
                 res = runner.run()
             finally:
                 self.dec_container()
-        logger().info(f'finish task {submission_id}/{case_no}')
+        logger().info(f"finish task {submission_id}/{case_no}")
         # truncate long stdout/stderr
         _res = res.copy()
-        for k in ('Stdout', 'Stderr'):
-            _res[k] = textwrap.shorten(_res.get(k, ''), 37, placeholder='...')
-        logger().debug(f'runner result: {_res}')
+        for k in ("Stdout", "Stderr"):
+            _res[k] = textwrap.shorten(_res.get(k, ""), 37, placeholder="...")
+        logger().debug(f"runner result: {_res}")
         with self.locks[submission_id]:
             self.on_case_complete(
                 submission_id=submission_id,
                 case_no=case_no,
-                stdout=res.get('Stdout', ''),
-                stderr=res.get('Stderr', ''),
-                exit_code=res.get('DockerExitCode', -1),
-                exec_time=res.get('Duration', -1),
-                mem_usage=res.get('MemUsage', -1),
-                prob_status=res['Status'],
+                stdout=res.get("Stdout", ""),
+                stderr=res.get("Stderr", ""),
+                exit_code=res.get("DockerExitCode", -1),
+                exec_time=res.get("Duration", -1),
+                mem_usage=res.get("MemUsage", -1),
+                prob_status=res["Status"],
             )
 
     def extract_compile_result(self, submission_id: str, lang: Language):
-        '''
+        """
         Get compile result for specific submission. If the language does
         not need to be compiled, return a AC result.
-        '''
+        """
         try:
             return self.compile_results[submission_id]
         except KeyError:
-            status = 'CE' if self.compile_need(lang) else 'AC'
-            return {'Status': status}
+            status = "CE" if self.compile_need(lang) else "AC"
+            return {"Status": status}
 
     def on_case_complete(
         self,
@@ -332,35 +367,43 @@ class Dispatcher(threading.Thread):
         # if id not exists
         if submission_id not in self.result:
             raise SubmissionIdNotFoundError(
-                f'Unexisted id {submission_id} recieved')
+                f"Unexisted id {submission_id} recieved")
         # update case result
         _, results = self.result[submission_id]
         if case_no not in results:
-            raise ValueError(f'{submission_id}/{case_no} not found.')
+            raise ValueError(f"{submission_id}/{case_no} not found.")
         results[case_no] = {
-            'stdout': stdout,
-            'stderr': stderr,
-            'exitCode': exit_code,
-            'execTime': exec_time,
-            'memoryUsage': mem_usage,
-            'status': prob_status
+            "stdout": stdout,
+            "stderr": stderr,
+            "exitCode": exit_code,
+            "execTime": exec_time,
+            "memoryUsage": mem_usage,
+            "status": prob_status,
         }
         # check completion
         _results = [k for k, v in results.items() if not v]
-        logger().debug(f'tasks wait for judge: {_results}')
+        logger().debug(f"tasks wait for judge: {_results}")
         if all(results.values()):
             self.on_submission_complete(submission_id)
 
     def on_submission_complete(self, submission_id: str):
         if not self.contains(submission_id):
-            raise SubmissionIdNotFoundError(f'{submission_id} not found!')
+            raise SubmissionIdNotFoundError(f"{submission_id} not found!")
         if self.testing:
             logger().info(
-                f'skip submission post processing in testing [submission_id={submission_id}]'
+                f"skip submission post processing in testing [submission_id={submission_id}]"
             )
             return True
         _, results = self.result[submission_id]
         # parse results
+
+        sa_result = self.sa_results.get(
+            submission_id,
+            {
+                "success": False,
+                "message": "Static analysis not performed.",
+            },
+        )
         submission_result = {}
         for no, r in results.items():
             task_no = int(no[:2])
@@ -376,19 +419,105 @@ class Dispatcher(threading.Thread):
         submission_result = [*submission_result.values()]
         # post data
         submission_data = {
-            'tasks': submission_result,
-            'token': config.SANDBOX_TOKEN
+            "tasks": submission_result,
+            "static_analysis": sa_result,
+            "token": config.SANDBOX_TOKEN,
         }
         self.release(submission_id)
-        logger().info(f'send to BE [submission_id={submission_id}]')
+        logger().info(f"send to BE [submission_id={submission_id}]")
         resp = requests.put(
-            f'{config.BACKEND_API}/submission/{submission_id}/complete',
+            f"{config.BACKEND_API}/submission/{submission_id}/complete",
             json=submission_data,
         )
-        logger().debug(f'get BE response: [{resp.status_code}] {resp.text}', )
+        logger().debug(f"get BE response: [{resp.status_code}] {resp.text}", )
         # clear
         if resp.ok:
             file_manager.clean_data(submission_id)
         # copy to another place
         else:
             file_manager.backup_data(submission_id)
+
+    def do_static_analysis(self, submission_id: str, problem_id: int):
+        # initialize lock for this submission
+        if submission_id not in self.sa_locks:
+            logger().error(f"sa_lock not initialized for {submission_id}")
+            self.sa_locks[submission_id] = threading.Lock()
+        if submission_id in self.sa_done:
+            return
+        with self.sa_locks[submission_id]:
+            if submission_id in self.sa_done:
+                return
+
+            analysis_result = None
+            try:
+                if not self.contains(submission_id):
+                    logger().warning(
+                        f"do_static_analysis: submission {submission_id} not registered; skip."
+                    )
+                    return
+                submission_config, _ = self.result[submission_id]
+
+                rules = self.get_static_analysis_rules(problem_id)
+
+                analyzer = StaticAnalyzer()
+                analysis_result = analyzer.analyze(
+                    submission_id=submission_id,
+                    language=submission_config.language,
+                    rules=rules,
+                )
+
+            except Exception as e:
+                logger().error(
+                    f"Static analysis error for {submission_id}: {e}",
+                    exc_info=True)
+                analysis_result = AnalysisResult(
+                    success=False,
+                    message=f"Static analysis threw exception: {e}")
+            finally:
+                if analysis_result is None:
+                    analysis_result = AnalysisResult(
+                        success=False,
+                        message="Unknown error during static analysis")
+
+                self.on_static_analysis_complete(submission_id=submission_id,
+                                                 result=analysis_result)
+
+    def on_static_analysis_complete(self, submission_id: str,
+                                    result: AnalysisResult):
+        self.sa_results[submission_id] = {
+            "success": result.is_success(),
+            "message": result.message,
+            "rules": result.rules,
+            "facts": result.facts,
+            "violations": result.violations,
+        }
+        self.sa_done.add(submission_id)
+
+    # Back End !!! api call
+    def get_static_analysis_rules(self, problem_id: int):
+        logger().debug(
+            f"Try to fetch problem rules. [problem_id: {problem_id}]")
+        try:
+            rules = fetch_problem_rules(problem_id)
+            return rules
+        except Exception as e:
+            logger().warning(
+                f"Do not set problem rules. [problem_id: {problem_id}] {e}")
+            return {}
+
+    # Back End !!! api call
+    # Later use: ask teacher AC code
+    def _find_teacher_ac_codes(self, submission_id: str) -> list[pathlib.Path]:
+        base = self.submission_runner_cwd / submission_id
+        pattern = [
+            "teacher_ac_code.c", "teacher_ac_code.cpp", "teacher_ac_code.py"
+        ]
+        found = []
+        try:
+            for name in pattern:
+                p = base / "testdata" / name
+                if p.exists():
+                    found.append(p)
+        except Exception:
+            pass
+        return found
