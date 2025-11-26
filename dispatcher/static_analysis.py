@@ -8,6 +8,7 @@ try:
 except ImportError:
     pass
 
+from dispatcher import config as dispatcher_config
 from .constant import Language
 from .utils import logger
 
@@ -15,20 +16,21 @@ from .utils import logger
 def detect_include_args():
     args = []
 
-    rdir = subprocess.check_output(["clang", "-print-resource-dir"],
-                                   text=True).strip()
-    args += [f"-I{pathlib.Path(rdir) / 'include'}"]
+    try:
+        rdir = subprocess.check_output(["clang", "-print-resource-dir"],
+                                       text=True).strip()
+        args += [f"-I{pathlib.Path(rdir) / 'include'}"]
 
-    # libstdc++ path (auto)
-    cxx_inc = subprocess.check_output(["g++", "-print-file-name=include"],
-                                      text=True).strip()
-    args += [f"-I{cxx_inc}"]
+        # libstdc++ path (auto)
+        cxx_inc = subprocess.check_output(["g++", "-print-file-name=include"],
+                                          text=True).strip()
+        args += [f"-I{cxx_inc}"]
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return []
 
     # try these path
     args += ["-I/usr/include", "-I/usr/include/x86_64-linux-gnu"]
 
-    # for debug
-    # print(args)
     return args
 
 
@@ -149,11 +151,14 @@ class StaticAnalyzer:
         HERE is entrance
         main Analyzer
         """
-        ## for debug
-        source_code_path = pathlib.Path(submission_id).resolve()
-        ## for real use
-        # working_dir = Path(dispatcher_config.get_submission_config()["working_dir"])
-        # source_code_path = (working_dir / submission_id / "src").resolve()
+        source_code_path = pathlib.Path(submission_id)
+        if not source_code_path.exists():
+            submission_cfg = dispatcher_config.get_submission_config()
+            source_code_path = pathlib.Path(
+                submission_cfg["working_dir"]) / str(submission_id)
+        if (source_code_path / "src").exists():
+            source_code_path = source_code_path / "src"
+        source_code_path = source_code_path.resolve()
 
         logger().debug(f"Analysis: {source_code_path} (lang: {language})")
         if not isinstance(rules, dict):
@@ -165,8 +170,10 @@ class StaticAnalyzer:
 
             elif language == Language.C or language == Language.CPP:
                 if "clang" not in globals():
-                    raise StaticAnalysisError(
-                        "Libclang is not installed or import failed")
+                    self.result._success = False
+                    self.result.message += (
+                        "Libclang is not installed; skip static analysis.")
+                    return self.result
                 self._analyze_c_cpp(source_code_path, rules, language)
 
             else:

@@ -250,7 +250,7 @@ class Dispatcher(threading.Thread):
         self.compile_locks[submission_id] = threading.Lock()
         self.created_at[submission_id] = datetime.now()
         self.build_strategies[submission_id] = submission_config.buildStrategy
-
+        logger().debug(f"current submissions: {[*self.result.keys()]}")
         try:
             build_plan = self._prepare_with_build_strategy(
                 submission_id=submission_id,
@@ -582,6 +582,7 @@ class Dispatcher(threading.Thread):
             return True
         _, results = self.result[submission_id]
         # parse results
+
         submission_result = {}
         for no, r in results.items():
             task_no = int(no[:2])
