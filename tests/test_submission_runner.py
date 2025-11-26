@@ -1,4 +1,5 @@
 import json
+import pathlib
 import pytest
 
 
@@ -70,3 +71,69 @@ def test_non_strict_diff(submission_generator, TestSubmissionRunner):
 
     res = runner.run()
     assert res['Status'] == 'AC', res
+
+
+def _patch_docker_client(monkeypatch, status_code):
+
+    class DummyClient:
+
+        def __init__(self, base_url=None):
+            self.status_code = status_code
+
+        def create_host_config(self, binds):
+            return binds
+
+        def create_container(self, **kwargs):
+            return {'Id': 'dummy'}
+
+        def start(self, container):
+            return
+
+        def wait(self, container):
+            return {'StatusCode': self.status_code}
+
+        def logs(self, container, stdout=False, stderr=False):
+            return b'stdout' if stdout else b'stderr'
+
+        def remove_container(self, container, v=True, force=True):
+            return
+
+    monkeypatch.setattr('runner.submission.docker.APIClient', DummyClient)
+
+
+def _ensure_src_dir(runner: 'SubmissionRunner'):
+    src_dir = pathlib.Path(runner._src_dir())
+    src_dir.mkdir(parents=True, exist_ok=True)
+    return src_dir
+
+
+def test_build_with_make_success(monkeypatch, TestSubmissionRunner):
+    runner = TestSubmissionRunner(
+        submission_id='zip-success',
+        time_limit=1000,
+        mem_limit=32768,
+        testdata_input_path='',
+        testdata_output_path='',
+        lang='cpp17',
+    )
+    _ensure_src_dir(runner)
+    _patch_docker_client(monkeypatch, status_code=0)
+    res = runner.build_with_make()
+    assert res['Status'] == 'AC'
+    assert res['DockerExitCode'] == 0
+
+
+def test_build_with_make_failure(monkeypatch, TestSubmissionRunner):
+    runner = TestSubmissionRunner(
+        submission_id='zip-fail',
+        time_limit=1000,
+        mem_limit=32768,
+        testdata_input_path='',
+        testdata_output_path='',
+        lang='cpp17',
+    )
+    _ensure_src_dir(runner)
+    _patch_docker_client(monkeypatch, status_code=2)
+    res = runner.build_with_make()
+    assert res['Status'] == 'CE'
+    assert res['DockerExitCode'] == 2

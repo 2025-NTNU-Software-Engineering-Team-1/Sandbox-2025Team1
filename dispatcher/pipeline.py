@@ -27,14 +27,14 @@ def fetch_problem_rules(problem_id: int) -> dict:
 
     logger().debug(f"fetch problem rules [problem_id: {problem_id}]")
     resp = rq.get(
-        f"{BACKEND_API}/problem/{problem_id}/sa_rules",
+        f"{BACKEND_API}/problem/{problem_id}/rules",
         params={
             "token": SANDBOX_TOKEN,
         },
     )
     try:
         handle_problem_response(resp)
-        return resp.json()["data"]
+        return resp.json().get("data")
         # suppose in "rules"
     except ValueError:
         logger().warning(

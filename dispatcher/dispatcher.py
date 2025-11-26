@@ -12,12 +12,18 @@ from runner.submission import SubmissionRunner
 from . import job, file_manager, config
 from .exception import *
 from .meta import Meta
-from .constant import Language
+from .constant import BuildStrategy, ExecutionMode, Language, SubmissionMode
+from .build_strategy import (
+    BuildPlan,
+    BuildStrategyError,
+    prepare_function_only_submission,
+    prepare_make_interactive,
+    prepare_make_normal,
+)
 from .utils import logger
-
 from .pipeline import fetch_problem_rules
 
-from .static_analysis import StaticAnalyzer, StaticAnalysisError, AnalysisResult
+from .static_analysis import StaticAnalyzer, StaticAnalysisError
 
 
 class Dispatcher(threading.Thread):
@@ -56,14 +62,10 @@ class Dispatcher(threading.Thread):
         self.submission_runner_cwd = pathlib.Path(s_config["working_dir"])
         self.timeout = 300
         self.created_at = {}
-
-        # static analysis
-        self.sa_results = {}
-        self.sa_done = set()
-        self.sa_locks = {}
-
-        # ac code paths
-        self.teacher_ac_paths = {}
+        self.prebuilt_submissions = set()
+        self.build_strategies = {}
+        self.build_plans = {}
+        self.build_locks = {}
 
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}
@@ -112,6 +114,79 @@ class Dispatcher(threading.Thread):
             else:
                 raise
 
+    def _is_prebuilt_submission(self, submission_id: str) -> bool:
+        return submission_id in self.prebuilt_submissions
+
+    def _is_build_pending(self, submission_id: str) -> bool:
+        return submission_id in self.build_plans
+
+    def _clear_submission_jobs(self, submission_id: str):
+        pending = []
+        while True:
+            try:
+                job_item = self.queue.get_nowait()
+            except queue.Empty:
+                break
+            if getattr(job_item, "submission_id", None) != submission_id:
+                pending.append(job_item)
+        for item in pending:
+            self.queue.put(item)
+
+    def _handle_build_failure(self, submission_id: str, message: str):
+        """Handle build/make failure by clearing queue and finalizing as CE."""
+        err_msg = message or "build failed"
+        logger().warning(f"build failed [id={submission_id}]: {err_msg}")
+        self.build_plans.pop(submission_id, None)
+        self.build_locks.pop(submission_id, None)
+        self.prebuilt_submissions.discard(submission_id)
+        self._clear_submission_jobs(submission_id)
+        if submission_id not in self.result:
+            return
+        _, task_content = self.result[submission_id]
+        failure_result = {
+            "stdout": "",
+            "stderr": err_msg,
+            "exitCode": 1,
+            "execTime": -1,
+            "memoryUsage": -1,
+            "status": "CE",
+        }
+        for case_no in task_content.keys():
+            task_content[case_no] = failure_result.copy()
+        self.on_submission_complete(submission_id)
+
+    def _prepare_with_build_strategy(
+        self,
+        submission_id: str,
+        problem_id: int,
+        meta: Meta,
+        submission_path: pathlib.Path,
+    ) -> BuildPlan:
+        strategy = BuildStrategy(meta.buildStrategy)
+        # Run the build helper for this submission so dispatcher can decide
+        # whether compile jobs are still needed.
+        logger().info(
+            f"[build] submission={submission_id} strategy={strategy.name}")
+        if strategy == BuildStrategy.COMPILE:
+            return BuildPlan(needs_make=False)
+        if strategy == BuildStrategy.MAKE_NORMAL:
+            return prepare_make_normal(
+                meta=meta,
+                submission_dir=submission_path,
+            )
+        if strategy == BuildStrategy.MAKE_INTERACTIVE:
+            return prepare_make_interactive(
+                meta=meta,
+                submission_dir=submission_path,
+            )
+        if strategy == BuildStrategy.MAKE_FUNCTION_ONLY:
+            return prepare_function_only_submission(
+                problem_id=problem_id,
+                meta=meta,
+                submission_dir=submission_path,
+            )
+        raise BuildStrategyError(f"unsupported build strategy: {strategy}")
+
     def handle(self, submission_id: str, problem_id: int):
         """
         handle a submission, save its config and push into task queue
@@ -133,17 +208,80 @@ class Dispatcher(threading.Thread):
         with (submission_path / "meta.json").open() as f:
             submission_config = Meta.parse_obj(json.load(f))
 
+        submission_mode = SubmissionMode(submission_config.submissionMode)
+        is_zip_mode = submission_mode == SubmissionMode.ZIP
+
+        # [Start] static analysis
+        if not is_zip_mode:
+            try:
+                logger().debug(
+                    f"Try to fetch problem rules. [problem_id: {problem_id}]")
+                rules_json = fetch_problem_rules(problem_id)
+
+                if rules_json:
+                    analyzer_instance = StaticAnalyzer()
+                    analysis_result = analyzer_instance.analyze(
+                        submission_id=submission_id,
+                        language=submission_config.language,
+                        rules=rules_json,
+                    )
+
+                    if not analysis_result.is_success():
+                        logger().warning(
+                            f"Static analysis failed: {analysis_result.message}"
+                        )
+                        return
+                else:
+                    logger().debug(
+                        f"Not found problem rules skipping analysis, [problem_id: {problem_id}]"
+                    )
+            except StaticAnalysisError as e:
+                logger().error(f"Static analyzer error: {e}")
+        else:
+            logger().debug(
+                f"Skip static analysis for zip-mode submission [id={submission_id}]"
+            )
+        # [End] static analysis
+
         # assign submission context
         task_content = {}
         self.result[submission_id] = (submission_config, task_content)
         self.locks[submission_id] = threading.Lock()
         self.compile_locks[submission_id] = threading.Lock()
         self.created_at[submission_id] = datetime.now()
-        self.sa_locks[submission_id] = threading.Lock()
+        self.build_strategies[submission_id] = submission_config.buildStrategy
+        logger().debug(f"current submissions: {[*self.result.keys()]}")
+        try:
+            build_plan = self._prepare_with_build_strategy(
+                submission_id=submission_id,
+                problem_id=problem_id,
+                meta=submission_config,
+                submission_path=submission_path,
+            )
+        except BuildStrategyError as exc:
+            logger().warning(
+                f"build strategy failed [id={submission_id}]: {exc}")
+            self.release(submission_id)
+            raise
+        needs_build = build_plan.needs_make
+        if needs_build:
+            logger().debug(f"[build] submission={submission_id} queued")
+            self.build_plans[submission_id] = build_plan
+            self.build_locks[submission_id] = threading.Lock()
+            self.queue.put_nowait(job.Build(submission_id=submission_id))
+        else:
+            if build_plan.finalize:
+                build_plan.finalize()
+            if not self.compile_need(submission_config.language):
+                logger().debug(
+                    f"[build] submission={submission_id} marked prebuilt")
+                self.prebuilt_submissions.add(submission_id)
 
         logger().debug(f"current submissions: {[*self.result.keys()]}")
         try:
-            if self.compile_need(submission_config.language):
+            if (not needs_build
+                    and not self._is_prebuilt_submission(submission_id)
+                    and self.compile_need(submission_config.language)):
                 self.queue.put_nowait(job.Compile(submission_id=submission_id))
             for i, task in enumerate(submission_config.tasks):
                 for j in range(task.caseCount):
@@ -169,13 +307,13 @@ class Dispatcher(threading.Thread):
                 self.compile_results,
                 self.locks,
                 self.created_at,
-                self.sa_locks,
-                self.sa_results,
         ):
             if submission_id in v:
                 del v[submission_id]
-
-        self.sa_done.discard(submission_id)
+        self.prebuilt_submissions.discard(submission_id)
+        self.build_strategies.pop(submission_id, None)
+        self.build_plans.pop(submission_id, None)
+        self.build_locks.pop(submission_id, None)
 
     def run(self):
         self.do_run = True
@@ -205,16 +343,12 @@ class Dispatcher(threading.Thread):
                 continue
             # get task info
             submission_config, _ = self.result[submission_id]
-            problem_id = submission_config.problem_id
+            if not isinstance(
+                    _job, job.Build) and self._is_build_pending(submission_id):
+                self.queue.put(_job)
+                time.sleep(0.1)
+                continue
             if isinstance(_job, job.Compile):
-                # static analysis executed before compile
-                # [Start] Static Analysis
-                try:
-                    self.do_static_analysis(submission_id, problem_id)
-                except Exception:
-                    logger().warning(
-                        f"static analysis failed for submission {submission_id}",
-                    )
                 threading.Thread(
                     target=self.compile,
                     args=(
@@ -222,20 +356,18 @@ class Dispatcher(threading.Thread):
                         submission_config.language,
                     ),
                 ).start()
+            elif isinstance(_job, job.Build):
+                threading.Thread(
+                    target=self.build,
+                    args=(submission_id, submission_config.language),
+                ).start()
+                continue
             # if this submission needs compile and it haven't finished
-            elif (self.compile_need(submission_config.language)
+            elif (not self._is_prebuilt_submission(submission_id)
+                  and self.compile_need(submission_config.language)
                   and self.compile_results.get(submission_id) is None):
                 self.queue.put(_job)
             else:
-                # ensure static analysis took place
-                if submission_id not in self.sa_done:
-                    try:
-                        self.do_static_analysis(submission_id, problem_id)
-                    except Exception:
-                        logger().warning(
-                            f"static analysis failed for submission {submission_id}",
-                        )
-
                 task_info = submission_config.tasks[_job.task_id]
                 case_no = f"{_job.task_id:02d}{_job.case_id:02d}"
                 logger().info(
@@ -297,6 +429,57 @@ class Dispatcher(threading.Thread):
             self.compile_results[submission_id] = res
             logger().debug(f'finish compiling, get status {res["Status"]}')
 
+    def build(
+        self,
+        submission_id: str,
+        lang: Language,
+    ):
+        plan = self.build_plans.get(submission_id)
+        if not plan:
+            return
+        lock = self.build_locks.get(submission_id)
+        if lock is None:
+            return
+        if lock.locked():
+            logger().error(
+                f"start a build thread on locked submission {submission_id}")
+            return
+        with lock:
+            logger().info(f"start building {submission_id}")
+            runner = SubmissionRunner(
+                submission_id=submission_id,
+                time_limit=-1,
+                mem_limit=-1,
+                testdata_input_path="",
+                testdata_output_path="",
+                lang=plan.lang_key or ["c11", "cpp17", "python3"][int(lang)],
+            )
+            res = runner.build_with_make()
+            if res.get("Status") != "AC":
+                self._handle_build_failure(
+                    submission_id=submission_id,
+                    message=res.get("Stderr") or "make failed",
+                )
+                return
+            try:
+                if plan.finalize:
+                    plan.finalize()
+            except BuildStrategyError as exc:
+                self._handle_build_failure(
+                    submission_id=submission_id,
+                    message=str(exc),
+                )
+                return
+            except Exception as exc:
+                self._handle_build_failure(
+                    submission_id=submission_id,
+                    message=f"build finalization failed: {exc}",
+                )
+                return
+            self.prebuilt_submissions.add(submission_id)
+            self.build_plans.pop(submission_id, None)
+            self.build_locks.pop(submission_id, None)
+
     def create_container(
         self,
         submission_id: str,
@@ -350,7 +533,10 @@ class Dispatcher(threading.Thread):
         try:
             return self.compile_results[submission_id]
         except KeyError:
-            status = "CE" if self.compile_need(lang) else "AC"
+            if self._is_prebuilt_submission(submission_id):
+                status = "AC"
+            else:
+                status = "CE" if self.compile_need(lang) else "AC"
             return {"Status": status}
 
     def on_case_complete(
@@ -397,13 +583,6 @@ class Dispatcher(threading.Thread):
         _, results = self.result[submission_id]
         # parse results
 
-        sa_result = self.sa_results.get(
-            submission_id,
-            {
-                "success": False,
-                "message": "Static analysis not performed.",
-            },
-        )
         submission_result = {}
         for no, r in results.items():
             task_no = int(no[:2])
@@ -420,8 +599,7 @@ class Dispatcher(threading.Thread):
         # post data
         submission_data = {
             "tasks": submission_result,
-            "static_analysis": sa_result,
-            "token": config.SANDBOX_TOKEN,
+            "token": config.SANDBOX_TOKEN
         }
         self.release(submission_id)
         logger().info(f"send to BE [submission_id={submission_id}]")
@@ -437,63 +615,6 @@ class Dispatcher(threading.Thread):
         else:
             file_manager.backup_data(submission_id)
 
-    def do_static_analysis(self, submission_id: str, problem_id: int):
-        # initialize lock for this submission
-        if submission_id not in self.sa_locks:
-            logger().error(f"sa_lock not initialized for {submission_id}")
-            self.sa_locks[submission_id] = threading.Lock()
-        if submission_id in self.sa_done:
-            return
-        with self.sa_locks[submission_id]:
-            if submission_id in self.sa_done:
-                return
-
-            analysis_result = None
-            try:
-                if not self.contains(submission_id):
-                    logger().warning(
-                        f"do_static_analysis: submission {submission_id} not registered; skip."
-                    )
-                    return
-                submission_config, _ = self.result[submission_id]
-
-                rules = self.get_static_analysis_rules(problem_id)
-
-                analyzer = StaticAnalyzer()
-                analysis_result = analyzer.analyze(
-                    submission_id=submission_id,
-                    language=submission_config.language,
-                    rules=rules,
-                )
-
-            except Exception as e:
-                logger().error(
-                    f"Static analysis error for {submission_id}: {e}",
-                    exc_info=True)
-                analysis_result = AnalysisResult(
-                    success=False,
-                    message=f"Static analysis threw exception: {e}")
-            finally:
-                if analysis_result is None:
-                    analysis_result = AnalysisResult(
-                        success=False,
-                        message="Unknown error during static analysis")
-
-                self.on_static_analysis_complete(submission_id=submission_id,
-                                                 result=analysis_result)
-
-    def on_static_analysis_complete(self, submission_id: str,
-                                    result: AnalysisResult):
-        self.sa_results[submission_id] = {
-            "success": result.is_success(),
-            "message": result.message,
-            "rules": result.rules,
-            "facts": result.facts,
-            "violations": result.violations,
-        }
-        self.sa_done.add(submission_id)
-
-    # Back End !!! api call
     def get_static_analysis_rules(self, problem_id: int):
         logger().debug(
             f"Try to fetch problem rules. [problem_id: {problem_id}]")
@@ -502,22 +623,5 @@ class Dispatcher(threading.Thread):
             return rules
         except Exception as e:
             logger().warning(
-                f"Do not set problem rules. [problem_id: {problem_id}] {e}")
-            return {}
-
-    # Back End !!! api call
-    # Later use: ask teacher AC code
-    def _find_teacher_ac_codes(self, submission_id: str) -> list[pathlib.Path]:
-        base = self.submission_runner_cwd / submission_id
-        pattern = [
-            "teacher_ac_code.c", "teacher_ac_code.cpp", "teacher_ac_code.py"
-        ]
-        found = []
-        try:
-            for name in pattern:
-                p = base / "testdata" / name
-                if p.exists():
-                    found.append(p)
-        except Exception:
-            pass
-        return found
+                f"Do not fetch problem rules. [problem_id: {problem_id}] {e}")
+            return None

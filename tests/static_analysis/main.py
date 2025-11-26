@@ -24,5 +24,7 @@ analysis_result = analyzer_instance.analyze(
 print("in dispatcher static result:")
 print("==================")
 print(analysis_result.message)
+print(analysis_result.rules)
+print(analysis_result.facts)
+print(analysis_result.violations)
 print("==================")
-print(analysis_result.json_result)

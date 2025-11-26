@@ -7,7 +7,7 @@ from pathlib import Path
 from zipfile import ZipFile
 import requests as rq
 
-from .constant import Language
+from .constant import BuildStrategy, ExecutionMode, Language, SubmissionMode
 from .meta import Meta
 from .utils import (
     get_redis_client,
@@ -52,12 +52,49 @@ def fetch_problem_meta(problem_id: int) -> str:
     return content
 
 
+def fetch_problem_asset(problem_id: int, asset_type: str) -> bytes:
+    logger().debug(
+        f"fetch problem asset [problem_id: {problem_id}, asset_type: {asset_type}]"
+    )
+    resp = rq.get(
+        f"{BACKEND_API}/problem/{problem_id}/asset/{asset_type}",
+        params={
+            "token": SANDBOX_TOKEN,
+        },
+    )
+    handle_problem_response(resp)
+    return resp.content
+
+
 def get_problem_meta(problem_id: int, language: Language) -> Meta:
     meta_path = META_DIR / f"{problem_id}.json"
     if not meta_path.exists():
         fetch_problem_meta(problem_id)
     obj = json.load(meta_path.open())
     obj["language"] = int(language)
+    obj.setdefault("submissionMode", int(SubmissionMode.CODE))
+    exec_mode = obj.get("executionMode", ExecutionMode.GENERAL.value)
+    if isinstance(exec_mode, str):
+        mapping = {
+            "general": ExecutionMode.GENERAL.value,
+            "functionOnly": ExecutionMode.FUNCTION_ONLY.value,
+            "interactive": ExecutionMode.INTERACTIVE.value,
+        }
+        exec_mode = mapping.get(exec_mode, ExecutionMode.GENERAL.value)
+    obj["executionMode"] = exec_mode
+    build_strategy = obj.get("buildStrategy", BuildStrategy.COMPILE.value)
+    if isinstance(build_strategy, str):
+        mapping = {
+            "compile": BuildStrategy.COMPILE.value,
+            "makeNormal": BuildStrategy.MAKE_NORMAL.value,
+            "makeFunctionOnly": BuildStrategy.MAKE_FUNCTION_ONLY.value,
+            "makeInteractive": BuildStrategy.MAKE_INTERACTIVE.value,
+        }
+        build_strategy = mapping.get(build_strategy,
+                                     BuildStrategy.COMPILE.value)
+    obj["buildStrategy"] = int(build_strategy)
+    obj.setdefault("assetPaths", {})
+    obj.setdefault("teacherFirst", False)
     return Meta.parse_obj(obj)
 
 
