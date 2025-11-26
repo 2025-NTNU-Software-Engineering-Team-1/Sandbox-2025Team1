@@ -295,6 +295,9 @@ class StaticAnalyzer:
             "for_loops": [],
             "while_loops": [],
             "recursive_calls": [],
+            "return_stmts": [],
+            "syntax_tags": set(),
+            "syntax_lines": {},
         }
         analyze_c_ast(translation_unit.cursor, facts, None, str(target_path))
         logger().debug(f"C/C++ analysis facts: {facts}")
@@ -364,24 +367,35 @@ class StaticAnalyzer:
     def _check_syntax_violations(self, facts: dict, rule_syntax: list,
                                  model: str) -> list:
         violations_data = []
-        rule_set = set(rule_syntax)
+        rule_set = {str(s).lower() for s in rule_syntax}
         syntax_checks = {
             "for": ("for_loops", "For Loop"),
             "while": ("while_loops", "While Loop"),
             "recursive": ("recursive_calls", "Recursive Call"),
+            "return": ("return_stmts", "Return Statement"),
         }
+        syntax_tags = facts.get("syntax_tags", set())
+        syntax_lines = facts.get("syntax_lines", {})
+
+        # compatibility for existing facts (for/while/recursive/return)
         for syntax_key, (fact_key, message) in syntax_checks.items():
             lines = facts.get(fact_key, [])
-            if not lines:
-                continue
-            if model == "black":
-                if syntax_key in rule_set:
-                    violations_data.append((f"Disallowed {message}", lines))
+            if lines:
+                syntax_tags.add(syntax_key)
+                if syntax_key not in syntax_lines:
+                    syntax_lines[syntax_key] = []
+                syntax_lines[syntax_key].extend(lines)
 
-            elif model == "white":
-                if syntax_key not in rule_set:
-                    violations_data.append(
-                        (f"Non-whitelisted {message}", lines))
+        if model == "black":
+            matched = sorted(syntax_tags.intersection(rule_set))
+            for tag in matched:
+                violations_data.append(
+                    (f"Disallowed Syntax ({tag})", syntax_lines.get(tag, [])))
+        elif model == "white":
+            unmatched = sorted(syntax_tags.difference(rule_set))
+            for tag in unmatched:
+                violations_data.append((f"Non-whitelisted Syntax ({tag})",
+                                        syntax_lines.get(tag, [])))
 
         return violations_data
 
@@ -409,6 +423,9 @@ class PythonAstVisitor(ast.NodeVisitor):
             "for_loops": [],
             "while_loops": [],
             "recursive_calls": [],
+            "return_stmts": [],
+            "syntax_tags": set(),
+            "syntax_lines": {},
         }
 
         # for recursive check
@@ -416,30 +433,36 @@ class PythonAstVisitor(ast.NodeVisitor):
         self.user_defined_functions = user_defined_functions
 
     def visit_Import(self, node):
+        self._record_tag(node)
         for alias in node.names:
             self.facts["imports"].add(alias.name)
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node):
+        self._record_tag(node)
         if node.module:
             self.facts["imports"].add(node.module)
         self.generic_visit(node)
 
     def visit_For(self, node):
+        self._record_tag(node)
         self.facts["for_loops"].append(node.lineno)
         self.generic_visit(node)
 
     def visit_While(self, node):
+        self._record_tag(node)
         self.facts["while_loops"].append(node.lineno)
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node):
+        self._record_tag(node)
         current_function_name = node.name
         self.current_function_stack.append(current_function_name)
         self.generic_visit(node)
         self.current_function_stack.pop()
 
     def visit_Call(self, node):
+        self._record_tag(node)
         function_name_called = None
         is_user_defined = False
 
@@ -458,6 +481,23 @@ class PythonAstVisitor(ast.NodeVisitor):
             self.facts["recursive_calls"].append(node.lineno)
         self.generic_visit(node)
 
+    def visit_Return(self, node):
+        self._record_tag(node)
+        self.facts["return_stmts"].append(node.lineno)
+        self.generic_visit(node)
+
+    def generic_visit(self, node):
+        # record any other node kinds to allow arbitrary syntax rules
+        self._record_tag(node)
+        super().generic_visit(node)
+
+    def _record_tag(self, node):
+        tag = node.__class__.__name__.lower()
+        self.facts["syntax_tags"].add(tag)
+        lineno = getattr(node, "lineno", None)
+        if lineno is not None:
+            self.facts["syntax_lines"].setdefault(tag, []).append(lineno)
+
 
 def analyze_c_ast(node, facts, current_func_cursor, main_file_path: str):
     if node.kind == clang.cindex.CursorKind.INCLUSION_DIRECTIVE:
@@ -468,6 +508,15 @@ def analyze_c_ast(node, facts, current_func_cursor, main_file_path: str):
                and node.location.file.name == main_file_path)
 
     if in_main:
+        # record syntax tag for arbitrary rule matching
+        tag = node.kind.name.lower()
+        facts["syntax_tags"].add(tag)
+        if tag.endswith("_stmt") or tag.endswith("_expr"):
+            base = tag.rsplit("_", 1)[0]
+            facts["syntax_tags"].add(base)
+            facts["syntax_lines"].setdefault(base,
+                                             []).append(node.location.line)
+        facts["syntax_lines"].setdefault(tag, []).append(node.location.line)
         if node.kind in (
                 clang.cindex.CursorKind.FOR_STMT,
                 clang.cindex.CursorKind.CXX_FOR_RANGE_STMT,
@@ -476,6 +525,9 @@ def analyze_c_ast(node, facts, current_func_cursor, main_file_path: str):
 
         elif node.kind == clang.cindex.CursorKind.WHILE_STMT:
             facts["while_loops"].append(node.location.line)
+
+        elif node.kind == clang.cindex.CursorKind.RETURN_STMT:
+            facts["return_stmts"].append(node.location.line)
 
         elif node.kind == clang.cindex.CursorKind.CALL_EXPR:
             callee = node.referenced

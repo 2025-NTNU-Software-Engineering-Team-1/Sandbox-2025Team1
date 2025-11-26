@@ -31,3 +31,42 @@ def test_c_static_analysis_violations():
     result = analyzer.analyze(submission_id=str(test_file_path),
                               language=Language.C,
                               rules=rules)
+
+
+def test_python_syntax_blacklist_custom(tmp_path):
+    src = tmp_path / "main.py"
+    src.write_text("def f(x):\n"
+                   "    if x > 0:\n"
+                   "        return x\n"
+                   "    return -x\n")
+    rules = {
+        "model": "black",
+        "syntax": ["return", "if"],
+    }
+    res = StaticAnalyzer().analyze(
+        submission_id=str(tmp_path),
+        language=Language.PY,
+        rules=rules,
+    )
+    assert not res.is_success()
+    assert "Disallowed Syntax (return)" in res.violations
+    assert "Disallowed Syntax (if)" in res.violations
+
+
+def test_python_syntax_whitelist_custom(tmp_path):
+    src = tmp_path / "main.py"
+    src.write_text("def f(x):\n"
+                   "    if x > 0:\n"
+                   "        return x\n"
+                   "    return -x\n")
+    rules = {
+        "model": "white",
+        "syntax": ["return"],
+    }
+    res = StaticAnalyzer().analyze(
+        submission_id=str(tmp_path),
+        language=Language.PY,
+        rules=rules,
+    )
+    assert not res.is_success()
+    assert "Non-whitelisted Syntax (if)" in res.violations
