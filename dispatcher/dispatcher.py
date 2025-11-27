@@ -23,7 +23,7 @@ from .build_strategy import (
 from .utils import logger
 from .pipeline import fetch_problem_rules
 
-from .static_analysis import StaticAnalyzer, StaticAnalysisError
+from .static_analysis import run_static_analysis, build_sa_ce_task_content
 
 
 class Dispatcher(threading.Thread):
@@ -67,43 +67,6 @@ class Dispatcher(threading.Thread):
         self.build_plans = {}
         self.build_locks = {}
         self.sa_payloads = {}
-
-    def _finalize_sa_failure(self, submission_id: str, meta: Meta,
-                             message: str):
-        """Mark submission as CE due to static analysis failure and notify backend."""
-        stderr = f"Static Analysis Not Passed: {message or ''}".strip()
-
-        class _Dummy:
-            """
-            A dummy object to mimic the interface of AnalysisResult
-            so we can reuse _record_sa_payload logic even for simple error strings.
-            """
-
-            def __init__(self, msg):
-                self.message = msg
-                self.violations = ""
-                self.rules = ""
-                self.facts = ""
-
-        self._record_sa_payload(
-            submission_id=submission_id,
-            analysis_result=_Dummy(stderr),
-            status="fail",
-        )
-        task_content = {}
-        for ti, task in enumerate(meta.tasks):
-            for ci in range(task.caseCount):
-                case_no = f"{ti:02d}{ci:02d}"
-                task_content[case_no] = {
-                    "stdout": "",
-                    "stderr": stderr,
-                    "exitCode": 1,
-                    "execTime": -1,
-                    "memoryUsage": -1,
-                    "status": "CE",
-                }
-        self.result[submission_id] = (meta, task_content)
-        self.on_submission_complete(submission_id)
 
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}
@@ -193,15 +156,6 @@ class Dispatcher(threading.Thread):
             task_content[case_no] = failure_result.copy()
         self.on_submission_complete(submission_id)
 
-    def _record_sa_payload(self, submission_id: str, analysis_result,
-                           status: str):
-        """
-        Record the static analysis result payload for a submission.
-        This payload will be sent to the backend upon submission completion.
-        """
-        self.sa_payloads[submission_id] = build_sa_payload(
-            analysis_result, status)
-
     def _prepare_with_build_strategy(
         self,
         submission_id: str,
@@ -259,60 +213,23 @@ class Dispatcher(threading.Thread):
         is_zip_mode = submission_mode == SubmissionMode.ZIP
 
         # [Start] static analysis
-        try:
-            logger().debug(
-                f"Try to fetch problem rules. [problem_id: {problem_id}]")
-            rules_json = fetch_problem_rules(problem_id)
-
-            if rules_json:
-                analyzer_instance = StaticAnalyzer()
-                if is_zip_mode:
-                    analysis_result = analyzer_instance.analyze_zip_sources(
-                        source_dir=submission_path / "src",
-                        language=submission_config.language,
-                        rules=rules_json,
-                    )
-                else:
-                    analysis_result = analyzer_instance.analyze(
-                        submission_id=submission_id,
-                        language=submission_config.language,
-                        rules=rules_json,
-                    )
-
-                if not analysis_result.is_success():
-                    msg = (analysis_result.message
-                           or analysis_result.violations
-                           or "static analysis failed")
-                    logger().warning(f"Static analysis failed: {msg}")
-                    self._record_sa_payload(
-                        submission_id=submission_id,
-                        analysis_result=analysis_result,
-                        status="fail",
-                    )
-                    self._finalize_sa_failure(
-                        submission_id=submission_id,
-                        meta=submission_config,
-                        message=msg,
-                    )
-                    return
-                else:
-                    self._record_sa_payload(
-                        submission_id=submission_id,
-                        meta=submission_config,
-                        analysis_result=analysis_result,
-                        status="pass",
-                    )
-            else:
-                logger().debug(
-                    f"Not found problem rules skipping analysis, [problem_id: {problem_id}]"
-                )
-        except StaticAnalysisError as e:
-            logger().error(f"Static analyzer error: {e}")
-            self._finalize_sa_failure(
-                submission_id=submission_id,
-                meta=submission_config,
-                message=str(e),
+        rules_json = fetch_problem_rules(problem_id)
+        success, payload, task_content = run_static_analysis(
+            submission_id=submission_id,
+            submission_path=submission_path,
+            meta=submission_config,
+            rules_json=rules_json,
+            is_zip_mode=is_zip_mode,
+        )
+        if payload:
+            self.sa_payloads[submission_id] = payload
+        if rules_json and not success:
+            self.result[submission_id] = (
+                submission_config,
+                task_content or build_sa_ce_task_content(
+                    submission_config, "Static Analysis Not Passed"),
             )
+            self.on_submission_complete(submission_id)
             return
         # [End] static analysis
 

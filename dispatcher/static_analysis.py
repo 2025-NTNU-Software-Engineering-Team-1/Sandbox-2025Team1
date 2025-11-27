@@ -3,6 +3,7 @@ import pathlib
 import ast
 import json
 import re
+from typing import TYPE_CHECKING, Tuple, Optional
 
 try:
     import clang.cindex  # type: ignore
@@ -12,6 +13,9 @@ except ImportError:
 from dispatcher import config as dispatcher_config
 from .constant import Language
 from .utils import logger
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .meta import Meta  # pydantic model used at runtime
 
 
 def detect_include_args():
@@ -115,6 +119,83 @@ def build_sa_payload(analysis_result, status: str) -> dict:
         "rules": _txt(analysis_result.rules),
         "report": report,
     }
+
+
+def format_sa_failure_message(message: str) -> str:
+    base = (message or "").strip()
+    return f"Static Analysis Not Passed: {base}".strip(
+    ) or "Static Analysis Not Passed"
+
+
+def build_sa_ce_task_content(meta: "Meta", stderr: str) -> dict:
+    """
+    Build a CE task content payload for all cases with the given stderr.
+    """
+    task_content = {}
+    for ti, task in enumerate(meta.tasks):
+        for ci in range(task.caseCount):
+            case_no = f"{ti:02d}{ci:02d}"
+            task_content[case_no] = {
+                "stdout": "",
+                "stderr": stderr,
+                "exitCode": 1,
+                "execTime": -1,
+                "memoryUsage": -1,
+                "status": "CE",
+            }
+    return task_content
+
+
+def run_static_analysis(
+    submission_id: str,
+    submission_path: pathlib.Path,
+    meta: "Meta",
+    rules_json: Optional[dict],
+    *,
+    is_zip_mode: bool,
+) -> Tuple[bool, Optional[dict], Optional[dict]]:
+    """
+    Execute static analysis and return (success, payload, task_content_if_fail).
+    Dispatcher delegates SA handling here to keep SA concerns contained.
+    """
+    if not rules_json:
+        return True, None, None
+
+    analyzer = StaticAnalyzer()
+    try:
+        if is_zip_mode:
+            analysis_result = analyzer.analyze_zip_sources(
+                source_dir=submission_path / "src",
+                language=meta.language,
+                rules=rules_json,
+            )
+        else:
+            analysis_result = analyzer.analyze(
+                submission_id=submission_id,
+                language=meta.language,
+                rules=rules_json,
+            )
+        status = "pass" if analysis_result.is_success() else "fail"
+        payload = build_sa_payload(analysis_result, status)
+        if analysis_result.is_success():
+            return True, payload, None
+
+        msg = analysis_result.message or analysis_result.violations or ""
+        stderr = format_sa_failure_message(msg)
+        return False, payload, build_sa_ce_task_content(meta, stderr)
+    except StaticAnalysisError as exc:
+        logger().error(f"Static analyzer error: {exc}", exc_info=True)
+        ar = AnalysisResult(success=False, message=str(exc))
+        payload = build_sa_payload(ar, "fail")
+        stderr = format_sa_failure_message(str(exc))
+        return False, payload, build_sa_ce_task_content(meta, stderr)
+    except Exception as exc:
+        logger().error(f"Unexpected error during static analysis: {exc}",
+                       exc_info=True)
+        ar = AnalysisResult(success=False, message=str(exc))
+        payload = build_sa_payload(ar, "fail")
+        stderr = format_sa_failure_message(str(exc))
+        return False, payload, build_sa_ce_task_content(meta, stderr)
 
 
 class StaticAnalysisError(Exception):
