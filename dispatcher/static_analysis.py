@@ -93,6 +93,30 @@ def _merge_facts(target: dict, source: dict):
             target[k] = v
 
 
+def build_sa_payload(analysis_result, status: str) -> dict:
+    """
+    Build a structured payload for static analysis report.
+    """
+
+    def _txt(field):
+        return str(field).strip() if field else ""
+
+    parts = [
+        _txt(analysis_result.message),
+        _txt(analysis_result.violations),
+        _txt(analysis_result.rules),
+        _txt(analysis_result.facts)
+    ]
+    report = "\n".join(p for p in parts if p).strip()
+    return {
+        "status": status,
+        "message": _txt(analysis_result.message),
+        "violations": _txt(analysis_result.violations),
+        "rules": _txt(analysis_result.rules),
+        "report": report,
+    }
+
+
 class StaticAnalysisError(Exception):
     """
     for debug

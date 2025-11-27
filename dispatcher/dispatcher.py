@@ -66,11 +66,30 @@ class Dispatcher(threading.Thread):
         self.build_strategies = {}
         self.build_plans = {}
         self.build_locks = {}
+        self.sa_payloads = {}
 
     def _finalize_sa_failure(self, submission_id: str, meta: Meta,
                              message: str):
         """Mark submission as CE due to static analysis failure and notify backend."""
         stderr = f"Static Analysis Not Passed: {message or ''}".strip()
+
+        class _Dummy:
+            """
+            A dummy object to mimic the interface of AnalysisResult
+            so we can reuse _record_sa_payload logic even for simple error strings.
+            """
+
+            def __init__(self, msg):
+                self.message = msg
+                self.violations = ""
+                self.rules = ""
+                self.facts = ""
+
+        self._record_sa_payload(
+            submission_id=submission_id,
+            analysis_result=_Dummy(stderr),
+            status="fail",
+        )
         task_content = {}
         for ti, task in enumerate(meta.tasks):
             for ci in range(task.caseCount):
@@ -174,6 +193,15 @@ class Dispatcher(threading.Thread):
             task_content[case_no] = failure_result.copy()
         self.on_submission_complete(submission_id)
 
+    def _record_sa_payload(self, submission_id: str, analysis_result,
+                           status: str):
+        """
+        Record the static analysis result payload for a submission.
+        This payload will be sent to the backend upon submission completion.
+        """
+        self.sa_payloads[submission_id] = build_sa_payload(
+            analysis_result, status)
+
     def _prepare_with_build_strategy(
         self,
         submission_id: str,
@@ -256,12 +284,24 @@ class Dispatcher(threading.Thread):
                            or analysis_result.violations
                            or "static analysis failed")
                     logger().warning(f"Static analysis failed: {msg}")
+                    self._record_sa_payload(
+                        submission_id=submission_id,
+                        analysis_result=analysis_result,
+                        status="fail",
+                    )
                     self._finalize_sa_failure(
                         submission_id=submission_id,
                         meta=submission_config,
                         message=msg,
                     )
                     return
+                else:
+                    self._record_sa_payload(
+                        submission_id=submission_id,
+                        meta=submission_config,
+                        analysis_result=analysis_result,
+                        status="pass",
+                    )
             else:
                 logger().debug(
                     f"Not found problem rules skipping analysis, [problem_id: {problem_id}]"
@@ -347,6 +387,7 @@ class Dispatcher(threading.Thread):
         self.build_strategies.pop(submission_id, None)
         self.build_plans.pop(submission_id, None)
         self.build_locks.pop(submission_id, None)
+        self.sa_payloads.pop(submission_id, None)
 
     def run(self):
         self.do_run = True
@@ -634,6 +675,9 @@ class Dispatcher(threading.Thread):
             "tasks": submission_result,
             "token": config.SANDBOX_TOKEN
         }
+        sa_payload = self.sa_payloads.pop(submission_id, None)
+        if sa_payload is not None:
+            submission_data["staticAnalysis"] = sa_payload
         self.release(submission_id)
         logger().info(f"send to BE [submission_id={submission_id}]")
         resp = requests.put(
