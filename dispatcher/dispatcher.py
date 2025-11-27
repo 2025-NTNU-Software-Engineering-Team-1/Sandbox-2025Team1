@@ -67,6 +67,25 @@ class Dispatcher(threading.Thread):
         self.build_plans = {}
         self.build_locks = {}
 
+    def _finalize_sa_failure(self, submission_id: str, meta: Meta,
+                             message: str):
+        """Mark submission as CE due to static analysis failure and notify backend."""
+        stderr = f"Static Analysis Not Passed: {message or ''}".strip()
+        task_content = {}
+        for ti, task in enumerate(meta.tasks):
+            for ci in range(task.caseCount):
+                case_no = f"{ti:02d}{ci:02d}"
+                task_content[case_no] = {
+                    "stdout": "",
+                    "stderr": stderr,
+                    "exitCode": 1,
+                    "execTime": -1,
+                    "memoryUsage": -1,
+                    "status": "CE",
+                }
+        self.result[submission_id] = (meta, task_content)
+        self.on_submission_complete(submission_id)
+
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}
 
@@ -227,8 +246,14 @@ class Dispatcher(threading.Thread):
                     )
 
                     if not analysis_result.is_success():
-                        logger().warning(
-                            f"Static analysis failed: {analysis_result.message}"
+                        msg = (analysis_result.message
+                               or analysis_result.violations
+                               or "static analysis failed")
+                        logger().warning(f"Static analysis failed: {msg}")
+                        self._finalize_sa_failure(
+                            submission_id=submission_id,
+                            meta=submission_config,
+                            message=msg,
                         )
                         return
                 else:
@@ -237,6 +262,12 @@ class Dispatcher(threading.Thread):
                     )
             except StaticAnalysisError as e:
                 logger().error(f"Static analyzer error: {e}")
+                self._finalize_sa_failure(
+                    submission_id=submission_id,
+                    meta=submission_config,
+                    message=str(e),
+                )
+                return
         else:
             logger().debug(
                 f"Skip static analysis for zip-mode submission [id={submission_id}]"
