@@ -231,47 +231,49 @@ class Dispatcher(threading.Thread):
         is_zip_mode = submission_mode == SubmissionMode.ZIP
 
         # [Start] static analysis
-        if not is_zip_mode:
-            try:
-                logger().debug(
-                    f"Try to fetch problem rules. [problem_id: {problem_id}]")
-                rules_json = fetch_problem_rules(problem_id)
+        try:
+            logger().debug(
+                f"Try to fetch problem rules. [problem_id: {problem_id}]")
+            rules_json = fetch_problem_rules(problem_id)
 
-                if rules_json:
-                    analyzer_instance = StaticAnalyzer()
+            if rules_json:
+                analyzer_instance = StaticAnalyzer()
+                if is_zip_mode:
+                    analysis_result = analyzer_instance.analyze_zip_sources(
+                        source_dir=submission_path / "src",
+                        language=submission_config.language,
+                        rules=rules_json,
+                    )
+                else:
                     analysis_result = analyzer_instance.analyze(
                         submission_id=submission_id,
                         language=submission_config.language,
                         rules=rules_json,
                     )
 
-                    if not analysis_result.is_success():
-                        msg = (analysis_result.message
-                               or analysis_result.violations
-                               or "static analysis failed")
-                        logger().warning(f"Static analysis failed: {msg}")
-                        self._finalize_sa_failure(
-                            submission_id=submission_id,
-                            meta=submission_config,
-                            message=msg,
-                        )
-                        return
-                else:
-                    logger().debug(
-                        f"Not found problem rules skipping analysis, [problem_id: {problem_id}]"
+                if not analysis_result.is_success():
+                    msg = (analysis_result.message
+                           or analysis_result.violations
+                           or "static analysis failed")
+                    logger().warning(f"Static analysis failed: {msg}")
+                    self._finalize_sa_failure(
+                        submission_id=submission_id,
+                        meta=submission_config,
+                        message=msg,
                     )
-            except StaticAnalysisError as e:
-                logger().error(f"Static analyzer error: {e}")
-                self._finalize_sa_failure(
-                    submission_id=submission_id,
-                    meta=submission_config,
-                    message=str(e),
+                    return
+            else:
+                logger().debug(
+                    f"Not found problem rules skipping analysis, [problem_id: {problem_id}]"
                 )
-                return
-        else:
-            logger().debug(
-                f"Skip static analysis for zip-mode submission [id={submission_id}]"
+        except StaticAnalysisError as e:
+            logger().error(f"Static analyzer error: {e}")
+            self._finalize_sa_failure(
+                submission_id=submission_id,
+                meta=submission_config,
+                message=str(e),
             )
+            return
         # [End] static analysis
 
         # assign submission context

@@ -70,3 +70,36 @@ def test_python_syntax_whitelist_custom(tmp_path):
     )
     assert not res.is_success()
     assert "Non-whitelisted Syntax (if)" in res.violations
+
+
+def test_zip_static_analysis_python_return_blacklist(tmp_path):
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "main.py").write_text("def f(x):\n"
+                                     "    if x > 0:\n"
+                                     "        return x\n"
+                                     "    return -x\n")
+    (src_dir / "Makefile").write_text("run:\n\tpython main.py\n")
+    rules = {"model": "black", "syntax": ["return"]}
+    res = StaticAnalyzer().analyze_zip_sources(
+        source_dir=src_dir,
+        language=Language.PY,
+        rules=rules,
+    )
+    assert not res.is_success()
+    assert "return" in res.violations
+
+
+def test_zip_static_analysis_disallowed_language_files(tmp_path):
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "main.py").write_text("print('ok')")
+    (src_dir / "bad.cpp").write_text("int main(){return 0;}")
+    rules = {"model": "black", "syntax": []}
+    res = StaticAnalyzer().analyze_zip_sources(
+        source_dir=src_dir,
+        language=Language.PY,
+        rules=rules,
+    )
+    assert not res.is_success()
+    assert "Disallowed language files" in res.message
