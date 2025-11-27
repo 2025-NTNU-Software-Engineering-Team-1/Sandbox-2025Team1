@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Tuple, Optional
 try:
     import clang.cindex  # type: ignore
 except ImportError:
-    pass
+    clang = None  # type: ignore
 
 from dispatcher import config as dispatcher_config
 from .constant import Language
@@ -174,8 +174,11 @@ def run_static_analysis(
                 submission_id=submission_id,
                 language=meta.language,
                 rules=rules_json,
+                base_dir=submission_path,
             )
         status = "pass" if analysis_result.is_success() else "fail"
+        if getattr(analysis_result, "_skipped", False):
+            status = "skip"
         payload = build_sa_payload(analysis_result, status)
         if analysis_result.is_success():
             return True, payload, None
@@ -218,6 +221,7 @@ class AnalysisResult:
                  facts="",
                  violations=""):
         self._success = success
+        self._skipped = False
         self.message = message
         self.rules = rules
         self.facts = facts
@@ -225,6 +229,11 @@ class AnalysisResult:
 
     def is_success(self):
         return self._success
+
+    def mark_skipped(self, msg: str):
+        self._skipped = True
+        self._success = True
+        self.message += msg
 
     def good_look_output_rules(self, rules: dict):
         if not rules:
@@ -310,16 +319,20 @@ class StaticAnalyzer:
         submission_id: str,
         language: Language,
         rules: dict = None,
+        base_dir: pathlib.Path | str | None = None,
     ):
         """
         HERE is entrance
         main Analyzer
         """
-        source_code_path = pathlib.Path(submission_id)
-        if not source_code_path.exists():
-            submission_cfg = dispatcher_config.get_submission_config()
-            source_code_path = pathlib.Path(
-                submission_cfg["working_dir"]) / str(submission_id)
+        if base_dir:
+            source_code_path = pathlib.Path(base_dir)
+        else:
+            source_code_path = pathlib.Path(submission_id)
+            if not source_code_path.exists():
+                submission_cfg = dispatcher_config.get_submission_config()
+                source_code_path = pathlib.Path(
+                    submission_cfg["working_dir"]) / str(submission_id)
         if (source_code_path / "src").exists():
             source_code_path = source_code_path / "src"
         source_code_path = source_code_path.resolve()
@@ -333,10 +346,10 @@ class StaticAnalyzer:
                 self._analyze_python(source_code_path, rules)
 
             elif language == Language.C or language == Language.CPP:
-                if "clang" not in globals():
-                    self.result._success = False
-                    self.result.message += (
-                        "Libclang is not installed; skip static analysis.")
+                if clang is None:
+                    logger().warning("libclang missing; skip static analysis")
+                    self.result.mark_skipped(
+                        "\nlibclang missing; static analysis skipped.")
                     return self.result
                 self._analyze_c_cpp(source_code_path, rules, language)
 
@@ -406,10 +419,10 @@ class StaticAnalyzer:
         if language == Language.PY:
             self._analyze_python(source_dir, rules, files=sources)
         elif language in (Language.C, Language.CPP):
-            if "clang" not in globals():
-                self.result._success = False
-                self.result.message += (
-                    "Libclang is not installed; skip static analysis.")
+            if clang is None:
+                logger().warning("libclang missing; skip static analysis")
+                self.result.mark_skipped(
+                    "\nlibclang missing; static analysis skipped.")
                 return self.result
             self._analyze_c_cpp(source_dir, rules, language, files=sources)
         else:
