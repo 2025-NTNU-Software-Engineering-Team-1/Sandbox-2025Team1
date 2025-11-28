@@ -9,6 +9,7 @@ from typing import Callable, Iterable, Optional
 from .constant import Language
 from .meta import Meta
 from .testdata import fetch_problem_asset
+from runner.submission import SubmissionRunner
 
 
 class BuildStrategyError(ValueError):
@@ -43,6 +44,7 @@ def prepare_make_interactive(
     meta: Meta,
     submission_dir: Path,
 ) -> BuildPlan:
+    _prepare_teacher_artifacts(meta=meta, submission_dir=submission_dir)
     return _build_plan_for_student_artifacts(
         language=meta.language,
         src_dir=submission_dir / "src",
@@ -173,3 +175,60 @@ def _ensure_single_executable(src_dir: Path, allowed: Iterable[str]):
     if extras:
         raise BuildStrategyError(
             "only one executable named a.out is allowed in zip submissions")
+
+
+def _prepare_teacher_artifacts(meta: Meta, submission_dir: Path):
+    teacher_dir = submission_dir / "teacher"
+    teacher_dir.mkdir(parents=True, exist_ok=True)
+    teacher_lang = _resolve_teacher_lang(meta=meta, teacher_dir=teacher_dir)
+    if teacher_lang == Language.PY:
+        src = teacher_dir / "main.py"
+        if not src.exists():
+            raise BuildStrategyError("teacher script missing")
+        return
+    compile_res = SubmissionRunner.compile_at_path(
+        src_dir=str(teacher_dir.resolve()),
+        lang=_lang_key(teacher_lang),
+    )
+    if compile_res.get("Status") != "AC":
+        err_msg = compile_res.get("Stderr") or compile_res.get(
+            "ExitMsg") or "teacher compile failed"
+        raise BuildStrategyError(f"teacher compile failed: {err_msg}")
+    binary = teacher_dir / "Teacher_main"
+    if not binary.exists():
+        raise BuildStrategyError("teacher binary missing after compile")
+    # also ensure ./main exists for sandbox execution
+    main_exec = teacher_dir / "main"
+    if not main_exec.exists():
+        try:
+            os.link(binary, main_exec)
+        except Exception:
+            try:
+                import shutil
+                shutil.copy(binary, main_exec)
+            except Exception:
+                pass
+    os.chmod(binary, binary.stat().st_mode | 0o111)
+    if main_exec.exists():
+        try:
+            os.chmod(main_exec, main_exec.stat().st_mode | 0o111)
+        except Exception:
+            pass
+
+
+def _resolve_teacher_lang(meta: Meta, teacher_dir: Path) -> Language:
+    # priority: assetPaths.teacherLang -> file suffix -> meta.language
+    teacher_lang_val = meta.assetPaths.get("teacherLang") if getattr(
+        meta, "assetPaths", None) else None
+    if isinstance(teacher_lang_val, str):
+        mapping = {"c": Language.C, "cpp": Language.CPP, "py": Language.PY}
+        if teacher_lang_val in mapping:
+            return mapping[teacher_lang_val]
+    # infer by existing files
+    if (teacher_dir / "main.py").exists():
+        return Language.PY
+    if (teacher_dir / "main.cpp").exists():
+        return Language.CPP
+    if (teacher_dir / "main.c").exists():
+        return Language.C
+    return Language(meta.language)

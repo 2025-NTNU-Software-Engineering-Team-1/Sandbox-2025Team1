@@ -1,5 +1,7 @@
 import dataclasses
 import pathlib
+import os
+import shutil
 from typing import Optional
 import docker
 from dispatcher import config as dispatcher_config
@@ -54,6 +56,58 @@ class SubmissionRunner:
         else:
             result.Status = 'CE'
         return dataclasses.asdict(result)
+
+    @classmethod
+    def compile_at_path(cls, src_dir: str, lang: str):
+        """Compile sources located at `src_dir` with given lang key."""
+        cfg_path = pathlib.Path(
+            __file__).resolve().parent.parent / ".config/submission.json"
+        cfg = dispatcher_config.get_submission_config(config_path=cfg_path)
+        orig_cwd = pathlib.Path.cwd()
+        os.chdir(cfg_path.parent.parent)
+        try:
+            result = Sandbox(
+                time_limit=20000,
+                mem_limit=1048576,
+                image=cfg["image"][lang],
+                src_dir=str(pathlib.Path(src_dir).resolve()),
+                lang_id=cfg["lang_id"][lang],
+                compile_need=True,
+            ).run()
+        except JudgeError:
+            return {'Status': 'JE'}
+        finally:
+            os.chdir(orig_cwd)
+        if result.Status == 'Exited Normally':
+            result.Status = 'AC'
+        else:
+            result.Status = 'CE'
+        payload = dataclasses.asdict(result)
+        # rename main -> Teacher_main if present
+        bin_path = pathlib.Path(src_dir) / "main"
+        target = pathlib.Path(src_dir) / "Teacher_main"
+        if bin_path.exists():
+            if target.exists():
+                target.unlink()
+            os.replace(bin_path, target)
+            try:
+                os.chmod(target, target.stat().st_mode | 0o111)
+            except PermissionError:
+                pass
+        # keep a ./main for sandbox_interactive runtime
+        if target.exists() and not bin_path.exists():
+            try:
+                os.link(target, bin_path)
+            except Exception:
+                try:
+                    shutil.copy(target, bin_path)
+                except Exception:
+                    pass
+            try:
+                os.chmod(bin_path, bin_path.stat().st_mode | 0o111)
+            except Exception:
+                pass
+        return payload
 
     def run(self):
         try:

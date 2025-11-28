@@ -9,6 +9,7 @@ import textwrap
 import shutil
 from datetime import datetime
 from runner.submission import SubmissionRunner
+from runner.interactive_runner import InteractiveRunner
 from . import job, file_manager, config
 from .exception import *
 from .meta import Meta
@@ -24,6 +25,8 @@ from .utils import logger
 from .pipeline import fetch_problem_rules
 
 from .static_analysis import run_static_analysis, build_sa_ce_task_content
+from .testdata import fetch_problem_asset
+from runner.interactive_runner import InteractiveRunner
 
 
 class Dispatcher(threading.Thread):
@@ -176,6 +179,11 @@ class Dispatcher(threading.Thread):
                 submission_dir=submission_path,
             )
         if strategy == BuildStrategy.MAKE_INTERACTIVE:
+            self._prepare_teacher_file(
+                problem_id=problem_id,
+                meta=meta,
+                submission_path=submission_path,
+            )
             return prepare_make_interactive(
                 meta=meta,
                 submission_dir=submission_path,
@@ -187,6 +195,40 @@ class Dispatcher(threading.Thread):
                 submission_dir=submission_path,
             )
         raise BuildStrategyError(f"unsupported build strategy: {strategy}")
+
+    def _prepare_teacher_file(
+        self,
+        problem_id: int,
+        meta: Meta,
+        submission_path: pathlib.Path,
+    ):
+        teacher_lang_val = (meta.assetPaths or {}).get("teacherLang")
+        if teacher_lang_val is None:
+            raise BuildStrategyError("teacherLang missing in meta.assetPaths")
+        teacher_lang_map = {
+            "c": Language.C,
+            "cpp": Language.CPP,
+            "py": Language.PY
+        }
+        teacher_lang = teacher_lang_map.get(
+            str(teacher_lang_val or "").lower(), Language(meta.language))
+        teacher_path = meta.assetPaths.get("teacher_file")
+        if not teacher_path:
+            raise BuildStrategyError("interactive mode requires Teacher_file")
+        teacher_dir = submission_path / "teacher"
+        if teacher_dir.exists():
+            shutil.rmtree(teacher_dir)
+        teacher_dir.mkdir(parents=True, exist_ok=True)
+        data = fetch_problem_asset(problem_id, "teacher_file")
+        ext = {
+            Language.C: ".c",
+            Language.CPP: ".cpp",
+            Language.PY: ".py"
+        }.get(teacher_lang)
+        if ext is None:
+            raise BuildStrategyError("unsupported teacher language")
+        src_path = teacher_dir / f"main{ext}"
+        src_path.write_bytes(data)
 
     def handle(self, submission_id: str, problem_id: int):
         """
@@ -384,6 +426,8 @@ class Dispatcher(threading.Thread):
                         in_path,
                         out_path,
                         submission_config.language,
+                        submission_config.executionMode,
+                        submission_config.teacherFirst,
                     ),
                 ).start()
 
@@ -480,24 +524,41 @@ class Dispatcher(threading.Thread):
         case_in_path: str,
         case_out_path: str,
         lang: Language,
+        execution_mode: ExecutionMode,
+        teacher_first: bool = False,
     ):
-        lang = ["c11", "cpp17", "python3"][int(lang)]
-        runner = SubmissionRunner(
-            submission_id,
-            time_limit,
-            mem_limit,
-            case_in_path,
-            case_out_path,
-            lang=lang,
-        )
-        res = self.extract_compile_result(submission_id, lang)
-        # Execute if compile successfully
-        if res["Status"] != "CE":
+        lang_key = ["c11", "cpp17", "python3"][int(lang)]
+        if ExecutionMode(execution_mode) == ExecutionMode.INTERACTIVE:
+            runner = InteractiveRunner(
+                submission_id=submission_id,
+                time_limit=time_limit,
+                mem_limit=mem_limit,
+                case_in_path=case_in_path,
+                teacher_first=teacher_first,
+                lang_key=lang_key,
+            )
             try:
                 self.inc_container()
                 res = runner.run()
             finally:
                 self.dec_container()
+        else:
+            runner = SubmissionRunner(
+                submission_id,
+                time_limit,
+                mem_limit,
+                case_in_path,
+                case_out_path,
+                lang=lang_key,
+            )
+            res = self.extract_compile_result(submission_id, lang)
+            # Execute if compile successfully
+            if res["Status"] != "CE":
+                try:
+                    self.inc_container()
+                    res = runner.run()
+                finally:
+                    self.dec_container()
         logger().info(f"finish task {submission_id}/{case_no}")
         # truncate long stdout/stderr
         _res = res.copy()
