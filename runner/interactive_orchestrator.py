@@ -150,10 +150,15 @@ def _dir_file_count(path: Path) -> int:
     return count
 
 
-def _setup_secure_permissions(teacher_dir: Path, student_dir: Path,
-                              teacher_uid: int, student_uid: int,
-                              sandbox_gid: int, student_allow_read: bool,
-                              student_allow_write: bool):
+def _setup_secure_permissions(
+    teacher_dir: Path,
+    student_dir: Path,
+    teacher_uid: int,
+    student_uid: int,
+    sandbox_gid: int,
+    student_allow_read: bool,
+    student_allow_write: bool,
+):
     """Ensure teacher dir owned by teacher UID (unreadable to student), student dir owned by student UID."""
     logger = logging.getLogger(__name__)
     try:
@@ -166,8 +171,7 @@ def _setup_secure_permissions(teacher_dir: Path, student_dir: Path,
                 mode = 0o700 if os.access(fp, os.X_OK) else 0o600
                 os.chmod(fp, mode)
     except Exception as exc:
-        raise OrchestratorError(
-            f"failed to secure teacher dir: {exc}") from exc
+        raise OrchestratorError(f"failed to secure teacher dir: {exc}") from exc
 
     try:
         dir_mode = 0o751
@@ -186,8 +190,7 @@ def _setup_secure_permissions(teacher_dir: Path, student_dir: Path,
                     mode = 0o511 if is_exec else 0o440
                 os.chmod(fp, mode)
     except Exception as exc:
-        raise OrchestratorError(
-            f"failed to secure student dir: {exc}") from exc
+        raise OrchestratorError(f"failed to secure student dir: {exc}") from exc
 
 
 def _setup_pipes(tmpdir: Path, mode: str):
@@ -245,10 +248,8 @@ def _setup_pipes(tmpdir: Path, mode: str):
 def orchestrate(args: argparse.Namespace):
     workdir = Path(args.workdir)
     workdir.mkdir(parents=True, exist_ok=True)
-    teacher_dir = Path(
-        args.teacher_dir) if args.teacher_dir else workdir / "teacher"
-    student_dir = Path(
-        args.student_dir) if args.student_dir else workdir / "src"
+    teacher_dir = Path(args.teacher_dir) if args.teacher_dir else workdir / "teacher"
+    student_dir = Path(args.student_dir) if args.student_dir else workdir / "src"
     teacher_lang = args.teacher_lang
     student_lang = args.student_lang
     if teacher_lang not in LANG_IDS or student_lang not in LANG_IDS:
@@ -267,28 +268,34 @@ def orchestrate(args: argparse.Namespace):
     if args.pipe_mode == "fifo" and not student_allow_write:
         args.pipe_mode = "devfd"
 
-    _setup_secure_permissions(teacher_dir, student_dir, teacher_uid,
-                              student_uid, sandbox_gid, student_allow_read,
-                              student_allow_write)
+    _setup_secure_permissions(
+        teacher_dir,
+        student_dir,
+        teacher_uid,
+        student_uid,
+        sandbox_gid,
+        student_allow_read,
+        student_allow_write,
+    )
     teacher_files_before = _dir_file_count(teacher_dir)
 
     # Ensure teacher binary/script ready
-    teacher_main = teacher_dir / ("Teacher_main"
-                                  if teacher_lang != "python3" else "main.py")
-    teacher_source = teacher_dir / ("main.py"
-                                    if teacher_lang == "python3" else "main.c")
+    teacher_main = teacher_dir / (
+        "Teacher_main" if teacher_lang != "python3" else "main.py"
+    )
+    teacher_source = teacher_dir / (
+        "main.py" if teacher_lang == "python3" else "main.c"
+    )
     if teacher_lang != "python3" and not teacher_main.exists():
         raise OrchestratorError("teacher binary missing")
     if teacher_lang == "python3" and not teacher_source.exists():
         raise OrchestratorError("teacher script missing")
     if teacher_lang != "python3":
-        _ensure_exec(teacher_dir / "main",
-                     [teacher_main, teacher_dir / "a.out"])
+        _ensure_exec(teacher_dir / "main", [teacher_main, teacher_dir / "a.out"])
     else:
         _ensure_exec(teacher_dir / "main.py", [teacher_source])
 
-    student_entry = student_dir / ("main.py"
-                                   if student_lang == "python3" else "main")
+    student_entry = student_dir / ("main.py" if student_lang == "python3" else "main")
     if student_lang != "python3":
         _ensure_exec(student_entry, [student_dir / "a.out", student_entry])
         _ensure_exec(student_dir / "a.out", [student_entry])
@@ -344,8 +351,7 @@ def orchestrate(args: argparse.Namespace):
         str(stu_res),
     ]
     commands = {
-        "student":
-        student_cmd,
+        "student": student_cmd,
         "teacher": [
             "sandbox_interactive",
             str(LANG_IDS[teacher_lang]),
@@ -434,22 +440,19 @@ def orchestrate(args: argparse.Namespace):
             try:
                 os.close(fd)
             except Exception as exc:
-                logging.getLogger(__name__).warning(
-                    "close holder fd failed: %s", exc)
+                logging.getLogger(__name__).warning("close holder fd failed: %s", exc)
         holder_fds = []
         if kick_student_fd is not None:
             try:
                 kick_dup = os.dup(kick_student_fd)
             except Exception as exc:
-                logging.getLogger(__name__).warning("dup kick fd failed: %s",
-                                                    exc)
+                logging.getLogger(__name__).warning("dup kick fd failed: %s", exc)
                 kick_dup = None
         for fd in keep_fds:
             try:
                 os.close(fd)
             except Exception as exc:
-                logging.getLogger(__name__).warning("close keep fd failed: %s",
-                                                    exc)
+                logging.getLogger(__name__).warning("close keep fd failed: %s", exc)
         keep_fds = []
 
         while time.time() < deadline:
@@ -458,20 +461,21 @@ def orchestrate(args: argparse.Namespace):
                 if proc.poll() is None:
                     all_done = False
             # If student already exited while teacher still waits on FIFO, send newline to unblock.
-            if (kick_dup is not None and "student" in procs
-                    and procs["student"].poll() is not None
-                    and procs.get("teacher")
-                    and procs["teacher"].poll() is None):
+            if (
+                kick_dup is not None
+                and "student" in procs
+                and procs["student"].poll() is not None
+                and procs.get("teacher")
+                and procs["teacher"].poll() is None
+            ):
                 try:
                     os.write(kick_dup, b"\n")
                 except Exception as exc:
-                    logging.getLogger(__name__).warning(
-                        "kick write failed: %s", exc)
+                    logging.getLogger(__name__).warning("kick write failed: %s", exc)
                 try:
                     os.close(kick_dup)
                 except Exception as exc:
-                    logging.getLogger(__name__).warning(
-                        "kick close failed: %s", exc)
+                    logging.getLogger(__name__).warning("kick close failed: %s", exc)
                 kick_dup = None
             if all_done:
                 break
@@ -515,25 +519,25 @@ def orchestrate(args: argparse.Namespace):
     teacher_status = teacher_result["status"]
     student_status = student_result["status"]
     teacher_err = ""
-    teacher_err_path = Path(pipe_bundle["teacher"].get(
-        "stderr", str(tmpdir / "teacher.err")))
+    teacher_err_path = Path(
+        pipe_bundle["teacher"].get("stderr", str(tmpdir / "teacher.err"))
+    )
     if teacher_err_path.exists():
         teacher_err = teacher_err_path.read_text()
     student_err = ""
-    student_err_path = Path(pipe_bundle["student"].get(
-        "stderr", str(tmpdir / "student.err")))
+    student_err_path = Path(
+        pipe_bundle["student"].get("stderr", str(tmpdir / "student.err"))
+    )
     if student_err_path.exists():
         student_err = student_err_path.read_text()
     final_status = None
     message = ""
     if student_status != "AC":
         final_status = student_status
-        message = student_result["message"] or student_err or student_result[
-            "raw"]
+        message = student_result["message"] or student_err or student_result["raw"]
     elif teacher_status != "AC":
         final_status = teacher_status
-        message = teacher_result["message"] or teacher_err or teacher_result[
-            "raw"]
+        message = teacher_result["message"] or teacher_err or teacher_result["raw"]
     else:
         check_status, msg = _parse_check_result(teacher_dir / "Check_Result")
         if check_status is None:
@@ -544,8 +548,7 @@ def orchestrate(args: argparse.Namespace):
             message = msg
 
     duration_ms = int((time.time() - start_time) * 1000)
-    mem_usage = max(teacher_result.get("mem_kb", -1),
-                    student_result.get("mem_kb", -1))
+    mem_usage = max(teacher_result.get("mem_kb", -1), student_result.get("mem_kb", -1))
     if mem_usage < 0:
         mem_usage = -1
     teacher_new_files = _dir_file_count(teacher_dir) - teacher_files_before
@@ -557,11 +560,10 @@ def orchestrate(args: argparse.Namespace):
             shutil.rmtree(tmpdir)
         except Exception as exc:
             logging.getLogger(__name__).warning(
-                "failed to remove tmpdir %s: %s", tmpdir, exc)
-    teacher_exit = procs.get(
-        "teacher").returncode if "teacher" in procs else -1
-    student_exit = procs.get(
-        "student").returncode if "student" in procs else -1
+                "failed to remove tmpdir %s: %s", tmpdir, exc
+            )
+    teacher_exit = procs.get("teacher").returncode if "teacher" in procs else -1
+    student_exit = procs.get("student").returncode if "student" in procs else -1
     return {
         "Status": final_status,
         "Stdout": "",
