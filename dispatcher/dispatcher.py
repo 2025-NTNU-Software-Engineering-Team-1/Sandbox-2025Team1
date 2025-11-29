@@ -15,7 +15,7 @@ from .meta import Meta
 from .constant import Language
 from .utils import logger
 
-from .pipeline import fetch_problem_rules
+from .pipeline import get_static_analysis_rules
 
 from .static_analysis import StaticAnalyzer, StaticAnalysisError, AnalysisResult
 
@@ -457,7 +457,7 @@ class Dispatcher(threading.Thread):
                     return
                 submission_config, _ = self.result[submission_id]
 
-                rules = self.get_static_analysis_rules(problem_id)
+                rules = get_static_analysis_rules(problem_id)
 
                 analyzer = StaticAnalyzer()
                 analysis_result = analyzer.analyze(
@@ -492,32 +492,3 @@ class Dispatcher(threading.Thread):
             "violations": result.violations,
         }
         self.sa_done.add(submission_id)
-
-    # Back End !!! api call
-    def get_static_analysis_rules(self, problem_id: int):
-        logger().debug(
-            f"Try to fetch problem rules. [problem_id: {problem_id}]")
-        try:
-            rules = fetch_problem_rules(problem_id)
-            return rules
-        except Exception as e:
-            logger().warning(
-                f"Do not set problem rules. [problem_id: {problem_id}] {e}")
-            return {}
-
-    # Back End !!! api call
-    # Later use: ask teacher AC code
-    def _find_teacher_ac_codes(self, submission_id: str) -> list[pathlib.Path]:
-        base = self.submission_runner_cwd / submission_id
-        pattern = [
-            "teacher_ac_code.c", "teacher_ac_code.cpp", "teacher_ac_code.py"
-        ]
-        found = []
-        try:
-            for name in pattern:
-                p = base / "testdata" / name
-                if p.exists():
-                    found.append(p)
-        except Exception:
-            pass
-        return found

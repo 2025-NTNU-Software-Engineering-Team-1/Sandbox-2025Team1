@@ -6,7 +6,22 @@ from .utils import (
 from .config import (
     BACKEND_API,
     SANDBOX_TOKEN,
+    TESTDATA_ROOT,
 )
+
+RULES_DIR = TESTDATA_ROOT / "rules"
+RULES_DIR.mkdir(exist_ok=True)
+
+
+# Back End !!! api call
+def get_static_analysis_rules(problem_id: int) -> dict:
+    rule_path = RULES_DIR / f"{problem_id}.json"
+    if not rule_path.exists():
+        return fetch_problem_rules(problem_id)
+    try:
+        return json.load(rule_path.open())
+    except json.JSONDecodeError:
+        return {}
 
 
 def handle_problem_response(resp: rq.Response):
