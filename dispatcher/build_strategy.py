@@ -2,6 +2,7 @@ import io
 import os
 import shutil
 import zipfile
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional
@@ -237,11 +238,7 @@ def _prepare_teacher_artifacts(problem_id: int, meta: Meta,
     }
     teacher_lang = teacher_lang_map.get(str(teacher_lang_val or "").lower())
     if teacher_lang is None:
-        # legacy: fallback to student language if teacherLang missing/invalid
-        try:
-            teacher_lang = Language(meta.language)
-        except Exception:
-            raise BuildStrategyError("interactive mode requires teacherLang")
+        raise BuildStrategyError("interactive mode requires teacherLang")
     teacher_path = meta.assetPaths.get("teacher_file") if getattr(
         meta, "assetPaths", None) else None
     if not teacher_path:
@@ -272,7 +269,14 @@ def _prepare_teacher_artifacts(problem_id: int, meta: Meta,
     if compile_res.get("Status") != "AC":
         err_msg = compile_res.get("Stderr") or compile_res.get(
             "ExitMsg") or "teacher compile failed"
-        raise BuildStrategyError(f"teacher compile failed: {err_msg}")
+        logging.getLogger(__name__).error("Teacher compile failed",
+                                          extra={
+                                              "problem_id": problem_id,
+                                              "error": err_msg,
+                                          })
+        raise BuildStrategyError(
+            "Interactive judge program failed to compile. Please contact course staff."
+        )
     binary = teacher_dir / "Teacher_main"
     if not binary.exists():
         raise BuildStrategyError("teacher binary missing after compile")

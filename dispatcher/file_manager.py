@@ -53,7 +53,7 @@ def _extract_code_source(code_dir: Path, source, language_id: int):
     except (OSError, AttributeError):
         pass
     with ZipFile(source) as zf:
-        zf.extractall(code_dir)
+        _safe_extract_zip(zf, code_dir)
     files = [*code_dir.iterdir()]
     if len(files) == 0:
         raise ValueError('no file in \'src\' directory')
@@ -71,7 +71,7 @@ def _extract_zip_source(code_dir: Path, source, language_id: int):
     except (OSError, AttributeError):
         pass
     with ZipFile(source) as zf:
-        zf.extractall(code_dir)
+        _safe_extract_zip(zf, code_dir)
     if language_id == int(Language.PY):
         main_py = code_dir / 'main.py'
         if not main_py.exists():
@@ -91,3 +91,21 @@ def backup_data(submission_id):
     submission_dir = config.SUBMISSION_DIR / submission_id
     dest = config.SUBMISSION_BACKUP_DIR / f'{submission_id}_{datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}'
     shutil.move(submission_dir, dest)
+
+
+def _safe_extract_zip(zf: ZipFile, target_dir: Path):
+    """Extract zip safely: block symlinks and path traversal."""
+    target_dir = target_dir.resolve()
+    for info in zf.infolist():
+        name = info.filename
+        if not name or name.endswith('/'):
+            continue
+        dest = (target_dir / name).resolve()
+        if not str(dest).startswith(str(target_dir)):
+            raise ValueError(f'Invalid path in zip: {name}')
+        # detect symlink via external_attr (high 4 bits == 0xA)
+        if (info.external_attr >> 28) == 0xA:
+            raise ValueError('Symlinks are not allowed in submission archive')
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with zf.open(info, 'r') as src, open(dest, 'wb') as dst:
+            shutil.copyfileobj(src, dst)

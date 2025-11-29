@@ -105,6 +105,7 @@ def _read_result(path: Path):
 
 
 def _parse_check_result(path: Path):
+    MAX_MESSAGE_LENGTH = 1024  # avoid leaking excessive info
     if not path.exists():
         return None, "Check_Result not found"
     status = None
@@ -114,6 +115,8 @@ def _parse_check_result(path: Path):
             status = line.split(":", 1)[1].strip()
         elif line.startswith("MESSAGE:"):
             message = line.split(":", 1)[1].strip()
+            if len(message) > MAX_MESSAGE_LENGTH:
+                message = message[:MAX_MESSAGE_LENGTH] + "...(truncated)"
     if status not in ("AC", "WA"):
         return None, "Invalid Check_Result STATUS"
     return status, message
@@ -364,7 +367,7 @@ def orchestrate(args: argparse.Namespace):
     env_student = os.environ.copy()
     env_teacher = os.environ.copy()
     # ensure writeable cwd
-    env_student["PWD"] = str(student_dir)
+    env_student["PWD"] = "/src"  # keep in sync with student cwd
     env_teacher["PWD"] = str(teacher_dir)
     env_student["SANDBOX_UID"] = str(student_uid)
     env_student["SANDBOX_GID"] = str(sandbox_gid)
