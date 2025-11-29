@@ -331,19 +331,21 @@ def orchestrate(args: argparse.Namespace):
 
     stu_res = tmpdir / "student.result"
     # sandbox_interactive argv layout:
-    # [lang_id, allow_net(0), stdin, stdout, stderr, time_ms, mem_kb, allow_write(1/0), output_limit, proc_limit, result_path]
+    # [lang_id, compile, stdin, stdout, stderr, time_ms, mem_kb, allow_write, output_limit, proc_limit, allow_network_access, result_path]
+    allow_network_access = "0"  # 預設封網（seccomp 不載入 socket 系列）
     student_cmd = [
         "sandbox_interactive",
         str(LANG_IDS[student_lang]),
-        "0",  # allow_net
+        "0",  # compile flag (runtime)
         pipe_bundle["student"]["stdin"],
         pipe_bundle["student"]["stdout"],
         pipe_bundle["student"].get("stderr", str(tmpdir / "student.err")),
         str(args.time_limit),
         str(args.mem_limit),
-        "1",  # allow_write flag; env controls actual seccomp
+        student_allow_write,  # allow_write
         str(output_limit),
         "10",  # process limit
+        allow_network_access,
         str(stu_res),
     ]
     commands = {
@@ -352,15 +354,16 @@ def orchestrate(args: argparse.Namespace):
         "teacher": [
             "sandbox_interactive",
             str(LANG_IDS[teacher_lang]),
-            "0",
+            "0",  # compile flag (runtime)
             pipe_bundle["teacher"]["stdin"],
             pipe_bundle["teacher"]["stdout"],
             pipe_bundle["teacher"].get("stderr", str(tmpdir / "teacher.err")),
             str(args.time_limit),
             str(args.mem_limit),
-            "1",  # teacher allowed to write
+            "1",  # teacher allow_write（固定啟用）
             str(output_limit),
             "10",
+            allow_network_access,
             str(tmpdir / "teacher.result"),
         ],
     }

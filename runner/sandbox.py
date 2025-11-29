@@ -50,6 +50,7 @@ class Sandbox:
     def run(self):
         # docker container settings
         stdin_path = '/dev/null' if not self.stdin_path else '/testdata/in'
+        allow_network_access = 0  # default: block network syscalls (seccomp)
         command_sandbox = ' '.join(
             map(
                 str,
@@ -65,6 +66,7 @@ class Sandbox:
                     '1',
                     '1073741824',  # 1 GB output limit
                     '10',  # 10 process
+                    allow_network_access,
                     '/result/result',
                 ),
             ))
