@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 import docker
-from dispatcher import config as dispatcher_config
+from runner.path_utils import PathTranslator
 
 
 @dataclass
@@ -22,31 +22,41 @@ class InteractiveRunner:
     pipe_mode: str = "auto"
 
     def run(self) -> dict:
-        cfg = dispatcher_config.get_submission_config()
+        translator = PathTranslator()
+        cfg = translator.cfg
         docker_url = cfg.get("docker_url", "unix://var/run/docker.sock")
         interactive_image = cfg.get("interactive_image") or cfg["image"][
             self.lang_key]
-        working_dir = Path(cfg["working_dir"]) / self.submission_id
-        submission_root = working_dir
+
+        submission_root = translator.working_dir / self.submission_id
+        host_root = translator.host_root
         teacher_dir = submission_root / "teacher"
         student_dir = submission_root / "src"
         testcase_dir = submission_root / "testcase"
+        submission_root_host = translator.to_host(submission_root)
+        teacher_dir_host = translator.to_host(teacher_dir)
+        student_dir_host = translator.to_host(student_dir)
+        testcase_dir_host = translator.to_host(testcase_dir)
+        if self.teacher_lang_key is None:
+            raise ValueError(
+                "teacher_lang_key is required for interactive mode")
+        teacher_lang_key = self.teacher_lang_key
 
         client = docker.APIClient(base_url=docker_url)
         binds = {
-            str(student_dir): {
+            str(student_dir_host): {
                 "bind": "/src",
                 "mode": "rw"
             },
-            str(teacher_dir): {
+            str(teacher_dir_host): {
                 "bind": "/teacher",
                 "mode": "rw"
             },
-            str(testcase_dir): {
+            str(testcase_dir_host): {
                 "bind": "/workspace/testcase",
                 "mode": "ro"
             },
-            str(Path(__file__).resolve().parent.parent): {
+            str(host_root): {
                 "bind": "/app",
                 "mode": "ro"
             },

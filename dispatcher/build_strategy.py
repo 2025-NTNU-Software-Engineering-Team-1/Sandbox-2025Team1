@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
-from .constant import Language
+from .constant import Language, SubmissionMode
 from .meta import Meta
 from .testdata import fetch_problem_asset
 from runner.submission import SubmissionRunner
@@ -30,6 +30,28 @@ class BuildPlan:
     finalize: Optional[Callable[[], None]] = None
 
 
+def prepare_interactive_teacher_artifacts(
+    problem_id: int,
+    meta: Meta,
+    submission_dir: Path,
+) -> None:
+    """
+    Unified teacher artifact preparation for interactive mode.
+    1. Fetch teacher source
+    2. Extract to submission_dir/teacher
+    3. Compile if needed
+    """
+    try:
+        _prepare_teacher_artifacts(
+            problem_id=problem_id,
+            meta=meta,
+            submission_dir=submission_dir,
+        )
+    except Exception as exc:
+        raise BuildStrategyError(
+            f"failed to prepare teacher artifacts: {exc}") from exc
+
+
 def prepare_make_normal(
     meta: Meta,
     submission_dir: Path,
@@ -41,14 +63,42 @@ def prepare_make_normal(
 
 
 def prepare_make_interactive(
+    problem_id: int,
     meta: Meta,
     submission_dir: Path,
 ) -> BuildPlan:
-    _prepare_teacher_artifacts(meta=meta, submission_dir=submission_dir)
-    return _build_plan_for_student_artifacts(
-        language=meta.language,
-        src_dir=submission_dir / "src",
+    """
+    Interactive handler: prepares teacher, then validates student code/zip.
+    - ZIP: python requires main.py; C/C++ requires Makefile (strict CE)
+    - CODE: direct compile (needs_make=False)
+    """
+    prepare_interactive_teacher_artifacts(
+        problem_id=problem_id,
+        meta=meta,
+        submission_dir=submission_dir,
     )
+
+    src_dir = submission_dir / "src"
+    language = Language(meta.language)
+    submission_mode = SubmissionMode(meta.submissionMode)
+
+    if submission_mode == SubmissionMode.ZIP:
+        if language == Language.PY:
+            if not (src_dir / "main.py").exists():
+                raise BuildStrategyError(
+                    "interactive zip requires main.py for python submissions")
+            return BuildPlan(needs_make=False)
+        # C/C++ strict Makefile requirement
+        if not (src_dir / "Makefile").exists():
+            raise BuildStrategyError(
+                "interactive zip requires Makefile for C/C++ submissions")
+        return _build_plan_for_student_artifacts(
+            language=language,
+            src_dir=src_dir,
+        )
+
+    # CODE upload: compile directly, no make
+    return BuildPlan(needs_make=False)
 
 
 def prepare_function_only_submission(
@@ -177,13 +227,42 @@ def _ensure_single_executable(src_dir: Path, allowed: Iterable[str]):
             "only one executable named a.out is allowed in zip submissions")
 
 
-def _prepare_teacher_artifacts(meta: Meta, submission_dir: Path):
+def _prepare_teacher_artifacts(problem_id: int, meta: Meta,
+                               submission_dir: Path):
+    teacher_lang_val = (meta.assetPaths or {}).get("teacherLang")
+    teacher_lang_map = {
+        "c": Language.C,
+        "cpp": Language.CPP,
+        "py": Language.PY,
+    }
+    teacher_lang = teacher_lang_map.get(str(teacher_lang_val or "").lower())
+    if teacher_lang is None:
+        # legacy: fallback to student language if teacherLang missing/invalid
+        try:
+            teacher_lang = Language(meta.language)
+        except Exception:
+            raise BuildStrategyError("interactive mode requires teacherLang")
+    teacher_path = meta.assetPaths.get("teacher_file") if getattr(
+        meta, "assetPaths", None) else None
+    if not teacher_path:
+        raise BuildStrategyError("interactive mode requires Teacher_file")
     teacher_dir = submission_dir / "teacher"
+    if teacher_dir.exists():
+        shutil.rmtree(teacher_dir)
     teacher_dir.mkdir(parents=True, exist_ok=True)
-    teacher_lang = _resolve_teacher_lang(meta=meta, teacher_dir=teacher_dir)
+    data = fetch_problem_asset(problem_id, "teacher_file")
+    ext = {
+        Language.C: ".c",
+        Language.CPP: ".cpp",
+        Language.PY: ".py",
+    }.get(teacher_lang)
+    if ext is None:
+        raise BuildStrategyError("unsupported teacher language")
+    src_path = teacher_dir / f"main{ext}"
+    src_path.write_bytes(data)
+    # Compile if needed
     if teacher_lang == Language.PY:
-        src = teacher_dir / "main.py"
-        if not src.exists():
+        if not src_path.exists():
             raise BuildStrategyError("teacher script missing")
         return
     compile_res = SubmissionRunner.compile_at_path(

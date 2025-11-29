@@ -4,8 +4,8 @@ import os
 import shutil
 from typing import Optional
 import docker
-from dispatcher import config as dispatcher_config
 from runner.sandbox import Sandbox, JudgeError
+from runner.path_utils import PathTranslator
 
 
 class SubmissionRunner:
@@ -21,7 +21,8 @@ class SubmissionRunner:
         lang: Optional[str] = None,
     ):
         # config file
-        submission_cfg = dispatcher_config.get_submission_config()
+        translator = PathTranslator()
+        submission_cfg = translator.cfg
         self.lang = lang
         self.special_judge = special_judge
         # required
@@ -31,9 +32,10 @@ class SubmissionRunner:
         self.testdata_input_path = testdata_input_path  # absoulte path str
         self.testdata_output_path = testdata_output_path  # absoulte path str
         # working_dir
-        self.working_dir = submission_cfg['working_dir']
+        self.working_dir = str(translator.working_dir)
         self.docker_url = submission_cfg.get('docker_url',
                                              'unix://var/run/docker.sock')
+        self.translator = translator
         # for language specified settings
         self.lang_id = submission_cfg['lang_id']
         self.image = submission_cfg['image']
@@ -45,7 +47,7 @@ class SubmissionRunner:
                 time_limit=20000,  # 20s
                 mem_limit=1048576,  # 1GB
                 image=self.image[self.lang],
-                src_dir=self._src_dir(),
+                src_dir=str(self.translator.to_host(self._src_dir())),
                 lang_id=self.lang_id[self.lang],
                 compile_need=True,
             ).run()
@@ -62,7 +64,9 @@ class SubmissionRunner:
         """Compile sources located at `src_dir` with given lang key."""
         cfg_path = pathlib.Path(
             __file__).resolve().parent.parent / ".config/submission.json"
-        cfg = dispatcher_config.get_submission_config(config_path=cfg_path)
+        translator = PathTranslator(config_path=cfg_path)
+        cfg = translator.cfg
+        src_dir_host = translator.to_host(pathlib.Path(src_dir))
         orig_cwd = pathlib.Path.cwd()
         os.chdir(cfg_path.parent.parent)
         try:
@@ -70,7 +74,7 @@ class SubmissionRunner:
                 time_limit=20000,
                 mem_limit=1048576,
                 image=cfg["image"][lang],
-                src_dir=str(pathlib.Path(src_dir).resolve()),
+                src_dir=str(src_dir_host),
                 lang_id=cfg["lang_id"][lang],
                 compile_need=True,
             ).run()
@@ -115,10 +119,11 @@ class SubmissionRunner:
                 time_limit=self.time_limit,
                 mem_limit=self.mem_limit,
                 image=self.image[self.lang],
-                src_dir=self._src_dir(),
+                src_dir=str(self.translator.to_host(self._src_dir())),
                 lang_id=self.lang_id[self.lang],
                 compile_need=False,
-                stdin_path=self.testdata_input_path,
+                stdin_path=str(
+                    self.translator.to_host(self.testdata_input_path)),
             ).run()
         except JudgeError:
             return {'Status': 'JE'}
@@ -137,11 +142,12 @@ class SubmissionRunner:
         src_dir = self._src_dir()
         client = docker.APIClient(base_url=self.docker_url)
         lang_key = self.lang if self.lang in self.image else 'cpp17'
+        host_src_dir = self.translator.to_host(src_dir)
         host_config = client.create_host_config(
-            binds={src_dir: {
-                'bind': '/src',
-                'mode': 'rw'
-            }})
+            binds={str(host_src_dir): {
+                       'bind': '/src',
+                       'mode': 'rw'
+                   }})
         container = client.create_container(
             image=self.image[lang_key],
             command=["/bin/sh", "-c", "make"],
