@@ -1,5 +1,5 @@
 import io
-from zipfile import ZipFile
+from zipfile import ZipFile, ZipInfo
 from pathlib import Path
 
 import pytest
@@ -123,5 +123,27 @@ def test_function_only_rejects_zip_submission(tmp_path):
             submission_id="zip-func",
             meta=meta,
             source=archive,
+            testdata=testdata_root,
+        )
+
+
+def test_extract_zip_rejects_symlink(tmp_path):
+    meta = _build_meta(SubmissionMode.ZIP,
+                       build_strategy=BuildStrategy.MAKE_NORMAL)
+    testdata_root = tmp_path / "testdata"
+    _prepare_testdata(testdata_root)
+    buf = io.BytesIO()
+    with ZipFile(buf, "w") as zf:
+        info = ZipInfo("evil_link")
+        # mark as symlink: high nibble 0xA (see external_attr >> 28)
+        info.external_attr = (0xA000 << 16)
+        zf.writestr(info, b"ignored")
+    buf.seek(0)
+    with pytest.raises(ValueError):
+        file_manager.extract(
+            root_dir=tmp_path,
+            submission_id="zip-symlink",
+            meta=meta,
+            source=buf,
             testdata=testdata_root,
         )

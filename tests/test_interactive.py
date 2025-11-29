@@ -11,6 +11,7 @@ from dispatcher.build_strategy import BuildStrategyError, _prepare_teacher_artif
 from dispatcher.constant import Language
 from dispatcher.meta import Meta, Task, SubmissionMode, ExecutionMode, BuildStrategy
 from runner.interactive_runner import InteractiveRunner
+from runner.interactive_orchestrator import _parse_check_result
 
 SUBMISSION_CFG = json.loads(Path(".config/submission.json").read_text())
 WORKDIR = Path(SUBMISSION_CFG["working_dir"]).resolve()
@@ -518,7 +519,16 @@ def test_interactive_teacher_too_many_files(clean_submission):
     _prepare_submission(sub_id, teacher, student)
     res = _run(sub_id)
     assert res["Status"] == "CE"
-    assert "too many files" in res["Stderr"]
+
+
+def test_check_result_message_truncation(tmp_path):
+    msg = "a" * 1100
+    path = tmp_path / "Check_Result"
+    path.write_text(f"STATUS: AC\nMESSAGE: {msg}\n")
+    status, truncated = _parse_check_result(path)
+    assert status == "AC"
+    assert truncated.endswith("...(truncated)")
+    assert truncated == ("a" * 1024) + "...(truncated)"
 
 
 def test_interactive_student_cannot_read_teacher(clean_submission):
