@@ -441,17 +441,18 @@ def test_teacher_compile_fail_build_strategy(tmp_path):
         buildStrategy=BuildStrategy.MAKE_INTERACTIVE,
         assetPaths={})
     with pytest.raises(BuildStrategyError):
-        _prepare_teacher_artifacts(meta=meta, submission_dir=tmp_path)
+        _prepare_teacher_artifacts(problem_id=1,
+                                   meta=meta,
+                                   submission_dir=tmp_path)
 
 
 def test_prepare_teacher_file_respects_teacher_lang(tmp_path, monkeypatch):
-    from dispatcher import dispatcher as dmod
+    import dispatcher.build_strategy as bs
 
     def fake_fetch(pid, asset):
         return b'print("ok")'
 
-    monkeypatch.setattr(dmod, "fetch_problem_asset", fake_fetch)
-    disp = dmod.Dispatcher(".config/dispatcher.json")
+    monkeypatch.setattr(bs, "fetch_problem_asset", fake_fetch)
     meta = Meta(
         language=Language.C,
         tasks=[Task(taskScore=100, memoryLimit=1, timeLimit=1, caseCount=1)],
@@ -462,20 +463,19 @@ def test_prepare_teacher_file_respects_teacher_lang(tmp_path, monkeypatch):
             "teacherLang": "py",
             "teacher_file": "ignored"
         })
-    disp._prepare_teacher_file(problem_id=1,
-                               meta=meta,
-                               submission_path=tmp_path)
+    bs.prepare_interactive_teacher_artifacts(problem_id=1,
+                                             meta=meta,
+                                             submission_dir=tmp_path)
     assert (tmp_path / "teacher" / "main.py").exists()
 
 
 def test_prepare_teacher_file_missing_teacher_lang(tmp_path, monkeypatch):
-    from dispatcher import dispatcher as dmod
+    import dispatcher.build_strategy as bs
 
     def fake_fetch(pid, asset):
         return b'int main(){return 0;}'
 
-    monkeypatch.setattr(dmod, "fetch_problem_asset", fake_fetch)
-    disp = dmod.Dispatcher(".config/dispatcher.json")
+    monkeypatch.setattr(bs, "fetch_problem_asset", fake_fetch)
     meta = Meta(
         language=Language.C,
         tasks=[Task(taskScore=100, memoryLimit=1, timeLimit=1, caseCount=1)],
@@ -484,9 +484,9 @@ def test_prepare_teacher_file_missing_teacher_lang(tmp_path, monkeypatch):
         buildStrategy=BuildStrategy.MAKE_INTERACTIVE,
         assetPaths={"teacher_file": "ignored"})
     with pytest.raises(BuildStrategyError):
-        disp._prepare_teacher_file(problem_id=1,
-                                   meta=meta,
-                                   submission_path=tmp_path)
+        bs.prepare_interactive_teacher_artifacts(problem_id=1,
+                                                 meta=meta,
+                                                 submission_dir=tmp_path)
 
 
 def test_interactive_teacher_disk_growth_limit(clean_submission):

@@ -17,6 +17,7 @@ from .constant import BuildStrategy, ExecutionMode, Language, SubmissionMode
 from .build_strategy import (
     BuildPlan,
     BuildStrategyError,
+    prepare_interactive_teacher_artifacts,
     prepare_function_only_submission,
     prepare_make_interactive,
     prepare_make_normal,

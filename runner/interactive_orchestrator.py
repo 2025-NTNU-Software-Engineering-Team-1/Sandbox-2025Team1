@@ -510,8 +510,13 @@ def orchestrate(args: argparse.Namespace):
             except Exception:
                 try:
                     os.chmod(case_local, 0o600)
-                except Exception:
-                    pass
+                    case_local.unlink()
+                except Exception as exc:
+                    logging.getLogger(__name__).warning(
+                        "failed to remove testcase file %s: %s",
+                        case_local,
+                        exc,
+                    )
 
     teacher_result = _read_result(tmpdir / "teacher.result")
     student_result = _read_result(stu_res)

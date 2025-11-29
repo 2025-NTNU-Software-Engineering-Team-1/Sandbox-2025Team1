@@ -228,8 +228,9 @@ def _ensure_single_executable(src_dir: Path, allowed: Iterable[str]):
             "only one executable named a.out is allowed in zip submissions")
 
 
-def _prepare_teacher_artifacts(problem_id: int, meta: Meta,
-                               submission_dir: Path):
+def _prepare_teacher_artifacts(meta: Meta,
+                               submission_dir: Path,
+                               problem_id: int | None = None):
     teacher_lang_val = (meta.assetPaths or {}).get("teacherLang")
     teacher_lang_map = {
         "c": Language.C,
