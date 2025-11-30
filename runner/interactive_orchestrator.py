@@ -269,6 +269,9 @@ def orchestrate(args: argparse.Namespace):
     # FIFO 需要學生端開啟寫入 FIFO，若禁用寫入則改用 devfd 以避免卡死
     if args.pipe_mode == "fifo" and not student_allow_write:
         args.pipe_mode = "devfd"
+    # 在部分環境中 FIFO 仍可能不穩定，預設退回 devfd 以避免因管道問題產生 CE
+    if args.pipe_mode == "fifo":
+        args.pipe_mode = "devfd"
 
     _setup_secure_permissions(teacher_dir, student_dir, teacher_uid,
                               student_uid, sandbox_gid, student_allow_read,
@@ -342,7 +345,7 @@ def orchestrate(args: argparse.Namespace):
         pipe_bundle["student"].get("stderr", str(tmpdir / "student.err")),
         str(args.time_limit),
         str(args.mem_limit),
-        student_allow_write,  # allow_write
+        "1" if student_allow_write else "0",  # allow_write
         str(output_limit),
         "10",  # process limit
         allow_network_access,
