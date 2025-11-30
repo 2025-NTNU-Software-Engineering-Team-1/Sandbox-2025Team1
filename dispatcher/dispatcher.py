@@ -128,6 +128,44 @@ class Dispatcher(threading.Thread):
             else:
                 raise
 
+    # static analysis thread
+    def _handle_static_analysis(self, submission_id: str, problem_id: int,
+                                submission_config, submission_path):
+        try:
+            rules_json = fetch_problem_rules(problem_id)
+
+            is_zip_mode = (SubmissionMode(
+                submission_config.submissionMode) == SubmissionMode.ZIP)
+
+            success, payload, task_content = run_static_analysis(
+                submission_id=submission_id,
+                submission_path=submission_path,
+                meta=submission_config,
+                rules_json=rules_json,
+                is_zip_mode=is_zip_mode,
+            )
+
+            if payload:
+                self.sa_payloads[submission_id] = payload
+
+            if rules_json and not success:
+                logger().warning(
+                    f"Static analysis failed for {submission_id}, marking CE")
+                if self.contains(submission_id):
+                    self.result[submission_id] = (
+                        submission_config,
+                        task_content or build_sa_ce_task_content(
+                            submission_config, "Static Analysis Not Passed"),
+                    )
+                    self.on_submission_complete(submission_id)
+                else:
+                    logger().debug(
+                        f"Static analysis passed for {submission_id}")
+        except Exception as e:
+            logger().error(
+                f"Error during static analysis for {submission_id}: {e}",
+                exc_info=True)
+
     # Helper methods for Build Strategy
     def _is_prebuilt_submission(self, submission_id: str) -> bool:
         return submission_id in self.prebuilt_submissions
@@ -398,46 +436,22 @@ class Dispatcher(threading.Thread):
             submission_config, _ = self.result[submission_id]
             problem_id = (submission_config.problem_id if hasattr(
                 submission_config, "problem_id") else 1)
-            """
-            # [FOR DEBUG]
+
             # [Static Analysis]
             if submission_id not in self.sa_checked:
-                logger().debug(f"Running static analysis for {submission_id}")
-                try:
-                    rules_json = fetch_problem_rules(problem_id)
-                    submission_path = self.SUBMISSION_DIR / submission_id
-                    is_zip_mode = (SubmissionMode(
-                        submission_config.submissionMode) == SubmissionMode.ZIP
-                                   )
-                    success, payload, task_content = run_static_analysis(
-                        submission_id=submission_id,
-                        submission_path=submission_path,
-                        meta=submission_config,
-                        rules_json=rules_json,
-                        is_zip_mode=is_zip_mode,
-                    )
-                    self.sa_checked.add(submission_id)
-                    if payload:
-                        self.sa_payloads[submission_id] = payload
+                self.sa_checked.add(submission_id)
+                submission_path = self.SUBMISSION_DIR / submission_id
+                threading.Thread(
+                    target=self._handle_static_analysis,
+                    args=(
+                        submission_id,
+                        problem_id,
+                        submission_config,
+                        submission_path,
+                    ),
+                    daemon=True,
+                ).start()
 
-                    if rules_json and not success:
-                        logger().warning(
-                            f"Static analysis failed for {submission_id}, marking CE"
-                        )
-                        self.result[submission_id] = (
-                            submission_config,
-                            task_content or build_sa_ce_task_content(
-                                submission_config,
-                                "Static Analysis Not Passed"),
-                        )
-                        self.on_submission_complete(submission_id)
-                        continue
-
-                except Exception as e:
-                    logger().error(
-                        f"Static Analysis Exception {submission_id}: {e}")
-                    self.sa_checked.add(submission_id)
-            """
             # [Sidecar] Determine Network Mode
             net_mode = self.network_controller.get_network_mode(submission_id)
 
