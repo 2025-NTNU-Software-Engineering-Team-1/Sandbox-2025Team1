@@ -2,6 +2,7 @@ import io
 import os
 import shutil
 import zipfile
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional
@@ -227,8 +228,9 @@ def _ensure_single_executable(src_dir: Path, allowed: Iterable[str]):
             "only one executable named a.out is allowed in zip submissions")
 
 
-def _prepare_teacher_artifacts(problem_id: int, meta: Meta,
-                               submission_dir: Path):
+def _prepare_teacher_artifacts(meta: Meta,
+                               submission_dir: Path,
+                               problem_id: int | None = None):
     teacher_lang_val = (meta.assetPaths or {}).get("teacherLang")
     teacher_lang_map = {
         "c": Language.C,
@@ -237,13 +239,9 @@ def _prepare_teacher_artifacts(problem_id: int, meta: Meta,
     }
     teacher_lang = teacher_lang_map.get(str(teacher_lang_val or "").lower())
     if teacher_lang is None:
-        # legacy: fallback to student language if teacherLang missing/invalid
-        try:
-            teacher_lang = Language(meta.language)
-        except Exception:
-            raise BuildStrategyError("interactive mode requires teacherLang")
-    teacher_path = meta.assetPaths.get("teacher_file") if getattr(
-        meta, "assetPaths", None) else None
+        raise BuildStrategyError("interactive mode requires teacherLang")
+    teacher_path = (meta.assetPaths.get("teacher_file") if getattr(
+        meta, "assetPaths", None) else None)
     if not teacher_path:
         raise BuildStrategyError("interactive mode requires Teacher_file")
     teacher_dir = submission_dir / "teacher"
@@ -270,9 +268,18 @@ def _prepare_teacher_artifacts(problem_id: int, meta: Meta,
         lang=_lang_key(teacher_lang),
     )
     if compile_res.get("Status") != "AC":
-        err_msg = compile_res.get("Stderr") or compile_res.get(
-            "ExitMsg") or "teacher compile failed"
-        raise BuildStrategyError(f"teacher compile failed: {err_msg}")
+        err_msg = (compile_res.get("Stderr") or compile_res.get("ExitMsg")
+                   or "teacher compile failed")
+        logging.getLogger(__name__).error(
+            "Teacher compile failed",
+            extra={
+                "problem_id": problem_id,
+                "error": err_msg,
+            },
+        )
+        raise BuildStrategyError(
+            "Interactive judge program failed to compile. Please contact course staff."
+        )
     binary = teacher_dir / "Teacher_main"
     if not binary.exists():
         raise BuildStrategyError("teacher binary missing after compile")
@@ -284,6 +291,7 @@ def _prepare_teacher_artifacts(problem_id: int, meta: Meta,
         except Exception:
             try:
                 import shutil
+
                 shutil.copy(binary, main_exec)
             except Exception:
                 pass
@@ -297,8 +305,8 @@ def _prepare_teacher_artifacts(problem_id: int, meta: Meta,
 
 def _resolve_teacher_lang(meta: Meta, teacher_dir: Path) -> Language:
     # priority: assetPaths.teacherLang -> file suffix -> meta.language
-    teacher_lang_val = meta.assetPaths.get("teacherLang") if getattr(
-        meta, "assetPaths", None) else None
+    teacher_lang_val = (meta.assetPaths.get("teacherLang") if getattr(
+        meta, "assetPaths", None) else None)
     if isinstance(teacher_lang_val, str):
         mapping = {"c": Language.C, "cpp": Language.CPP, "py": Language.PY}
         if teacher_lang_val in mapping:

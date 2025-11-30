@@ -17,7 +17,6 @@ from .utils import logger
 if TYPE_CHECKING:
     from .meta import Meta
 
-
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
@@ -26,15 +25,13 @@ if TYPE_CHECKING:
 def detect_include_args():
     args = []
     try:
-        rdir = subprocess.check_output(
-            ["clang", "-print-resource-dir"], text=True
-        ).strip()
+        rdir = subprocess.check_output(["clang", "-print-resource-dir"],
+                                       text=True).strip()
         args += [f"-I{pathlib.Path(rdir) / 'include'}"]
 
         # libstdc++ path (auto)
-        cxx_inc = subprocess.check_output(
-            ["g++", "-print-file-name=include"], text=True
-        ).strip()
+        cxx_inc = subprocess.check_output(["g++", "-print-file-name=include"],
+                                          text=True).strip()
         args += [f"-I{cxx_inc}"]
     except (subprocess.SubprocessError, FileNotFoundError):
         return []
@@ -58,23 +55,20 @@ def _is_code_file(path: pathlib.Path) -> bool:
     return path.suffix.lower() in {".c", ".cpp", ".cc", ".cxx", ".h", ".py"}
 
 
-def _collect_sources_by_ext(
-    source_dir: pathlib.Path, language: Language
-) -> list[pathlib.Path]:
+def _collect_sources_by_ext(source_dir: pathlib.Path,
+                            language: Language) -> list[pathlib.Path]:
     """
     Collect source files based on language extension.
     """
     allowed_ext = _allowed_ext_for_language(language)
     return [
-        p
-        for p in source_dir.rglob("*")
+        p for p in source_dir.rglob("*")
         if p.is_file() and p.suffix.lower() in allowed_ext
     ]
 
 
-def _collect_sources_from_makefile(
-    source_dir: pathlib.Path, language: Language
-) -> list[pathlib.Path]:
+def _collect_sources_from_makefile(source_dir: pathlib.Path,
+                                   language: Language) -> list[pathlib.Path]:
     """
     Parse Makefile to find source files.
     """
@@ -110,22 +104,24 @@ def build_sa_payload(analysis_result, status: str) -> dict:
     """
 
     return {
-        "status": status,
-        "message": analysis_result.message.strip(),
-        "violations": (
-            json.dumps(analysis_result.json_result)
-            if analysis_result.json_result
-            else ""
-        ),
-        "report": analysis_result.message.strip(),
+        "status":
+        status,
+        "message":
+        analysis_result.message.strip(),
+        "violations": (json.dumps(analysis_result.json_result)
+                       if analysis_result.json_result else ""),
+        "report":
+        analysis_result.message.strip(),
         # Retain raw result for backend if needed
-        "json_result": analysis_result.json_result,
+        "json_result":
+        analysis_result.json_result,
     }
 
 
 def format_sa_failure_message(message: str) -> str:
     base = (message or "").strip()
-    return f"Static Analysis Not Passed: {base}".strip() or "Static Analysis Not Passed"
+    return f"Static Analysis Not Passed: {base}".strip(
+    ) or "Static Analysis Not Passed"
 
 
 def build_sa_ce_task_content(meta: "Meta", stderr: str) -> dict:
@@ -193,7 +189,8 @@ def run_static_analysis(
         stderr = format_sa_failure_message(str(exc))
         return False, payload, build_sa_ce_task_content(meta, stderr)
     except Exception as exc:
-        logger().error(f"Unexpected error during static analysis: {exc}", exc_info=True)
+        logger().error(f"Unexpected error during static analysis: {exc}",
+                       exc_info=True)
         ar = AnalysisResult(success=False, message=str(exc))
         payload = build_sa_payload(ar, "fail")
         stderr = format_sa_failure_message(str(exc))
@@ -205,7 +202,13 @@ class StaticAnalysisError(Exception):
 
 
 class AnalysisResult:
-    def __init__(self, success=True, message="", rules="", facts="", violations=""):
+
+    def __init__(self,
+                 success=True,
+                 message="",
+                 rules="",
+                 facts="",
+                 violations=""):
         self._success = success
         self._skipped = False
         self.message = message
@@ -265,9 +268,8 @@ class StaticAnalyzer:
             source_code_path = pathlib.Path(submission_id)
             if not source_code_path.exists():
                 submission_cfg = dispatcher_config.get_submission_config()
-                source_code_path = pathlib.Path(submission_cfg["working_dir"]) / str(
-                    submission_id
-                )
+                source_code_path = pathlib.Path(
+                    submission_cfg["working_dir"]) / str(submission_id)
         if (source_code_path / "src").exists():
             source_code_path = source_code_path / "src"
         source_code_path = source_code_path.resolve()
@@ -284,17 +286,16 @@ class StaticAnalyzer:
                 if clang is None:
                     logger().warning("libclang missing; skip static analysis")
                     self.result.mark_skipped(
-                        "\nlibclang missing; static analysis skipped."
-                    )
+                        "\nlibclang missing; static analysis skipped.")
                     return self.result
                 self._analyze_c_cpp(source_code_path, rules, language)
 
             else:
-                logger().warning(f"Unsupported static analysis languages: {language}")
+                logger().warning(
+                    f"Unsupported static analysis languages: {language}")
                 self.result._success = False
                 self.result.message += (
-                    f"\nUnsupported static analysis languages: {language}"
-                )
+                    f"\nUnsupported static analysis languages: {language}")
 
         except StaticAnalysisError:
             logger().error(f"Static Analyzer inner error", exc_info=True)
@@ -302,7 +303,8 @@ class StaticAnalyzer:
 
         except Exception as e:
             logger().error(f"An unexpected error occurred: {e}", exc_info=True)
-            raise StaticAnalysisError(f"An unexpected error occurred: {e}") from e
+            raise StaticAnalysisError(
+                f"An unexpected error occurred: {e}") from e
 
         if self.result.is_success():
             logger().debug("Static analysis passed.")
@@ -326,13 +328,13 @@ class StaticAnalyzer:
         # 1. Check for disallowed files
         allowed_ext = _allowed_ext_for_language(language)
         disallowed_files = [
-            p
-            for p in source_dir.rglob("*")
-            if p.is_file() and _is_code_file(p) and p.suffix.lower() not in allowed_ext
+            p for p in source_dir.rglob("*") if p.is_file()
+            and _is_code_file(p) and p.suffix.lower() not in allowed_ext
         ]
         if disallowed_files:
             self.result._success = False
-            bad = ", ".join(str(p.relative_to(source_dir)) for p in disallowed_files)
+            bad = ", ".join(
+                str(p.relative_to(source_dir)) for p in disallowed_files)
             self.result.message += f"Disallowed language files found: {bad}"
             return self.result
 
@@ -351,7 +353,8 @@ class StaticAnalyzer:
         elif language in (Language.C, Language.CPP):
             if clang is None:
                 logger().warning("libclang missing; skip static analysis")
-                self.result.mark_skipped("\nlibclang missing; static analysis skipped.")
+                self.result.mark_skipped(
+                    "\nlibclang missing; static analysis skipped.")
                 return self.result
             self._analyze_c_cpp(source_dir, rules, language, files=sources)
         else:
@@ -380,8 +383,7 @@ class StaticAnalyzer:
             main_py = source_path / "main.py"
             if not main_py.exists():
                 raise StaticAnalysisError(
-                    f"Not found 'main.py'. Source path: {source_path}"
-                )
+                    f"Not found 'main.py'. Source path: {source_path}")
             target_files = [main_py]
 
         # Definition Visitor
@@ -478,7 +480,8 @@ class StaticAnalyzer:
             translation_unit = index.parse(
                 str(target_path),
                 args=lang_args + include_args,
-                options=clang.cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
+                options=clang.cindex.TranslationUnit.
+                PARSE_DETAILED_PROCESSING_RECORD,
             )
             if not translation_unit:
                 self.result._success = False
@@ -502,7 +505,8 @@ class StaticAnalyzer:
 
         return self.result
 
-    def get_violations(self, facts: dict, rules: dict, language: Language) -> dict:
+    def get_violations(self, facts: dict, rules: dict,
+                       language: Language) -> dict:
         """
         return structured violations dict
         example:
@@ -524,23 +528,19 @@ class StaticAnalyzer:
         # import / header check
         if language == Language.PY:
             violations_structure["imports"] = self._check_items(
-                facts.get("imports", []), rules.get("imports", []), model
-            )
+                facts.get("imports", []), rules.get("imports", []), model)
             del violations_structure["headers"]
         else:
             violations_structure["headers"] = self._check_items(
-                facts.get("headers", []), rules.get("headers", []), model
-            )
+                facts.get("headers", []), rules.get("headers", []), model)
             del violations_structure["imports"]
 
         # function call check
         violations_structure["functions"] = self._check_items(
-            facts.get("function_calls", []), rules.get("functions", []), model
-        )
+            facts.get("function_calls", []), rules.get("functions", []), model)
         # syntax check
         violations_structure["syntax"] = self._check_items(
-            facts.get("syntax", []), rules.get("syntax", []), model
-        )
+            facts.get("syntax", []), rules.get("syntax", []), model)
 
         has_violations = False
         for key, items in violations_structure.items():
@@ -553,7 +553,8 @@ class StaticAnalyzer:
             return {}
         return violations_structure
 
-    def _check_items(self, used_items: list, rule_items: list, model: str) -> list:
+    def _check_items(self, used_items: list, rule_items: list,
+                     model: str) -> list:
         """
         used_items: [{"name": "sort", "line": 10}, ...]
         rule_items: ["sort", "vector"]
@@ -605,6 +606,7 @@ class StaticAnalyzer:
 
 
 class DefinitionVisitor(ast.NodeVisitor):
+
     def __init__(self):
         self.global_functions = set()
         self.defined_classes = {}
@@ -653,12 +655,18 @@ class PythonAstVisitor(ast.NodeVisitor):
     def visit_Import(self, node):
         self._record_tag(node)
         for alias in node.names:
-            self.facts["imports"].append({"name": alias.name, "line": node.lineno})
+            self.facts["imports"].append({
+                "name": alias.name,
+                "line": node.lineno
+            })
 
     def visit_ImportFrom(self, node):
         self._record_tag(node)
         if node.module:
-            self.facts["imports"].append({"name": node.module, "line": node.lineno})
+            self.facts["imports"].append({
+                "name": node.module,
+                "line": node.lineno
+            })
         self.generic_visit(node)
 
     def visit_For(self, node):
@@ -719,11 +727,12 @@ class PythonAstVisitor(ast.NodeVisitor):
                     is_user_defined = True
 
         if is_user_defined:
-            if (
-                self.current_function_stack
-                and called_func_name in self.current_function_stack
-            ):
-                self.facts["syntax"].append({"name": "recursive", "line": node.lineno})
+            if (self.current_function_stack
+                    and called_func_name in self.current_function_stack):
+                self.facts["syntax"].append({
+                    "name": "recursive",
+                    "line": node.lineno
+                })
             if self.current_function_stack:
                 caller = self.current_function_stack[-1]
                 callee = called_func_name
@@ -731,9 +740,10 @@ class PythonAstVisitor(ast.NodeVisitor):
                     self.call_graph[caller] = []
                 self.call_graph[caller].append((callee, node.lineno))
         else:
-            self.facts["function_calls"].append(
-                {"name": full_call_name, "line": node.lineno}
-            )
+            self.facts["function_calls"].append({
+                "name": full_call_name,
+                "line": node.lineno
+            })
         self.generic_visit(node)
 
     def detect_cycles(self):
@@ -751,13 +761,15 @@ class PythonAstVisitor(ast.NodeVisitor):
                         # Report recursion if not already reported
                         already_reported = False
                         for item in self.facts["syntax"]:
-                            if item["name"] == "recursive" and item["line"] == lineno:
+                            if item["name"] == "recursive" and item[
+                                    "line"] == lineno:
                                 already_reported = True
                                 break
                         if not already_reported:
-                            self.facts["syntax"].append(
-                                {"name": "recursive", "line": lineno}
-                            )
+                            self.facts["syntax"].append({
+                                "name": "recursive",
+                                "line": lineno
+                            })
             recursion_stack.remove(u)
 
         for node in list(self.call_graph.keys()):
@@ -766,6 +778,7 @@ class PythonAstVisitor(ast.NodeVisitor):
 
 
 class CppAstVisitor:
+
     def __init__(self, main_file_path: str):
         self.main_file_path = main_file_path
         self.facts = {
@@ -779,22 +792,20 @@ class CppAstVisitor:
     def visit(self, node, current_function_usr=None):
         if node.kind == clang.cindex.CursorKind.INCLUSION_DIRECTIVE:
             if str(node.location.file) == self.main_file_path:
-                self.facts["headers"].append(
-                    {"name": node.spelling, "line": node.location.line}
-                )
+                self.facts["headers"].append({
+                    "name": node.spelling,
+                    "line": node.location.line
+                })
             return
 
-        in_main = (
-            node.location
-            and node.location.file
-            and str(node.location.file) == self.main_file_path
-        )
+        in_main = (node.location and node.location.file
+                   and str(node.location.file) == self.main_file_path)
 
         if node.kind in (
-            clang.cindex.CursorKind.FUNCTION_DECL,
-            clang.cindex.CursorKind.CXX_METHOD,
-            clang.cindex.CursorKind.CONSTRUCTOR,
-            clang.cindex.CursorKind.DESTRUCTOR,
+                clang.cindex.CursorKind.FUNCTION_DECL,
+                clang.cindex.CursorKind.CXX_METHOD,
+                clang.cindex.CursorKind.CONSTRUCTOR,
+                clang.cindex.CursorKind.DESTRUCTOR,
         ):
             if node.is_definition():
                 current_function_usr = node.get_usr()
@@ -804,17 +815,21 @@ class CppAstVisitor:
 
         if in_main:
             if node.kind in (
-                clang.cindex.CursorKind.FOR_STMT,
-                clang.cindex.CursorKind.CXX_FOR_RANGE_STMT,
+                    clang.cindex.CursorKind.FOR_STMT,
+                    clang.cindex.CursorKind.CXX_FOR_RANGE_STMT,
             ):
-                self.facts["syntax"].append({"name": "for", "line": node.location.line})
+                self.facts["syntax"].append({
+                    "name": "for",
+                    "line": node.location.line
+                })
             elif node.kind == clang.cindex.CursorKind.WHILE_STMT:
-                self.facts["syntax"].append(
-                    {"name": "while", "line": node.location.line}
-                )
+                self.facts["syntax"].append({
+                    "name": "while",
+                    "line": node.location.line
+                })
             elif node.kind in (
-                clang.cindex.CursorKind.CALL_EXPR,
-                clang.cindex.CursorKind.MEMBER_REF_EXPR,
+                    clang.cindex.CursorKind.CALL_EXPR,
+                    clang.cindex.CursorKind.MEMBER_REF_EXPR,
             ):
                 if "operator" not in node.spelling:
                     self._handle_call(node, current_function_usr)
@@ -839,14 +854,16 @@ class CppAstVisitor:
 
         if is_system:
             if callee_name:
-                self.facts["function_calls"].append(
-                    {"name": callee_name, "line": node.location.line}
-                )
+                self.facts["function_calls"].append({
+                    "name": callee_name,
+                    "line": node.location.line
+                })
         else:
             if caller_usr:
                 if caller_usr not in self.call_graph:
                     self.call_graph[caller_usr] = []
-                self.call_graph[caller_usr].append((callee_usr, node.location.line))
+                self.call_graph[caller_usr].append(
+                    (callee_usr, node.location.line))
 
     def detect_cycles(self):
         visited = set()
@@ -863,13 +880,15 @@ class CppAstVisitor:
                     elif v in recursion_stack:
                         already_reported = False
                         for item in self.facts["syntax"]:
-                            if item["name"] == "recursive" and item["line"] == lineno:
+                            if item["name"] == "recursive" and item[
+                                    "line"] == lineno:
                                 already_reported = True
                                 break
                         if not already_reported:
-                            self.facts["syntax"].append(
-                                {"name": "recursive", "line": lineno}
-                            )
+                            self.facts["syntax"].append({
+                                "name": "recursive",
+                                "line": lineno
+                            })
             recursion_stack.remove(u)
 
         for node in list(self.call_graph.keys()):

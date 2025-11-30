@@ -12,11 +12,11 @@ class PathTranslator:
     def __init__(self, config_path: str | Path | None = None):
         self.cfg = dispatcher_config.get_submission_config(config_path)
         self.working_dir = Path(self.cfg["working_dir"]).expanduser()
-        self.sandbox_root = Path(
+        self.sandbox_root = (Path(
             self.cfg.get("sandbox_root",
-                         self.working_dir.parent)).expanduser().resolve()
-        self.host_root = Path(self.cfg.get(
-            "host_root", self.sandbox_root)).expanduser().resolve()
+                         self.working_dir.parent)).expanduser().resolve())
+        self.host_root = (Path(self.cfg.get(
+            "host_root", self.sandbox_root)).expanduser().resolve())
 
     def to_host(self, path: str | Path) -> Path:
         """

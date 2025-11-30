@@ -69,13 +69,18 @@ class Sandbox:
                     "10",  # 10 process
                     "/result/result",
                 ),
-            )
-        )
+            ))
 
         # Bind mounts set
         binds = {
-            self.src_dir: {"bind": "/src", "mode": "rw"},
-            self.stdin_path: {"bind": "/testdata/in", "mode": "ro"},
+            self.src_dir: {
+                "bind": "/src",
+                "mode": "rw"
+            },
+            self.stdin_path: {
+                "bind": "/testdata/in",
+                "mode": "ro"
+            },
         }
         container_working_dir = "/src"
 
@@ -154,9 +159,9 @@ class Sandbox:
         with tempfile.TemporaryDirectory() as extract_path:
             tar.extract(filename, extract_path)
             with open(
-                f"{extract_path}/{filename}",
-                "r",
-                errors="ignore",
+                    f"{extract_path}/{filename}",
+                    "r",
+                    errors="ignore",
             ) as f:
                 contents = f.read()
         return contents

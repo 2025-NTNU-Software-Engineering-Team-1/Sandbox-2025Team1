@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-import docker
+import docker  # type: ignore
 from runner.path_utils import PathTranslator
 
 
@@ -26,9 +26,11 @@ class InteractiveRunner:
         translator = PathTranslator()
         cfg = translator.cfg
         docker_url = cfg.get("docker_url", "unix://var/run/docker.sock")
-        interactive_image = cfg.get("interactive_image") or cfg["image"][self.lang_key]
-        working_dir = Path(cfg["working_dir"]) / self.submission_id
-        submission_root = working_dir
+        interactive_image = cfg.get("interactive_image") or cfg["image"][
+            self.lang_key]
+
+        submission_root = translator.working_dir / self.submission_id
+        host_root = translator.host_root
         teacher_dir = submission_root / "teacher"
         student_dir = submission_root / "src"
         testcase_dir = submission_root / "testcase"
@@ -37,15 +39,28 @@ class InteractiveRunner:
         student_dir_host = translator.to_host(student_dir)
         testcase_dir_host = translator.to_host(testcase_dir)
         if self.teacher_lang_key is None:
-            raise ValueError("teacher_lang_key is required for interactive mode")
+            raise ValueError(
+                "teacher_lang_key is required for interactive mode")
         teacher_lang_key = self.teacher_lang_key
 
         client = docker.APIClient(base_url=docker_url)
         binds = {
-            str(student_dir): {"bind": "/src", "mode": "rw"},
-            str(teacher_dir): {"bind": "/teacher", "mode": "rw"},
-            str(testcase_dir): {"bind": "/workspace/testcase", "mode": "ro"},
-            str(Path(__file__).resolve().parent.parent): {"bind": "/app", "mode": "ro"},
+            str(student_dir_host): {
+                "bind": "/src",
+                "mode": "rw"
+            },
+            str(teacher_dir_host): {
+                "bind": "/teacher",
+                "mode": "rw"
+            },
+            str(testcase_dir_host): {
+                "bind": "/workspace/testcase",
+                "mode": "ro"
+            },
+            str(host_root): {
+                "bind": "/app",
+                "mode": "ro"
+            },
         }
         host_config = client.create_host_config(
             binds=binds,
@@ -54,8 +69,7 @@ class InteractiveRunner:
             tmpfs={"/tmp": "rw,noexec,nosuid"},
         )
         case_path_container = str(
-            Path("/workspace/testcase") / Path(self.case_in_path).name
-        )
+            Path("/workspace/testcase") / Path(self.case_in_path).name)
 
         command = [
             "python3",
@@ -97,9 +111,8 @@ class InteractiveRunner:
         try:
             client.start(container)
             exit_status = client.wait(container)
-            logs = client.logs(container, stdout=True, stderr=True).decode(
-                "utf-8", "ignore"
-            )
+            logs = client.logs(container, stdout=True,
+                               stderr=True).decode("utf-8", "ignore")
         finally:
             try:
                 client.remove_container(container, v=True, force=True)
