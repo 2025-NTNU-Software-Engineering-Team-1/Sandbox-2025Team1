@@ -13,7 +13,7 @@ from runner.submission import SubmissionRunner
 from runner.interactive_runner import InteractiveRunner
 from . import job, file_manager, config
 from .exception import *
-from .meta import Meta
+from .meta import Meta, Sidecar
 from .constant import BuildStrategy, ExecutionMode, Language, SubmissionMode
 from .build_strategy import (
     BuildPlan,
@@ -38,8 +38,7 @@ class Dispatcher(threading.Thread):
         super().__init__()
         self.testing = False
         # read config
-        queue_limit, container_limit = config.get_dispatcher_limits(
-            dispatcher_config)
+        queue_limit, container_limit = config.get_dispatcher_limits(dispatcher_config)
         self.do_run = True
         self.SUBMISSION_DIR = config.SUBMISSION_DIR
         self.MAX_TASK_COUNT = queue_limit
@@ -121,8 +120,7 @@ class Dispatcher(threading.Thread):
             create()
         except FileExistsError:
             # no found or time out, retry
-            if not self.contains(submission_id) or self.is_timed_out(
-                    submission_id):
+            if not self.contains(submission_id) or self.is_timed_out(submission_id):
                 self.release(submission_id)
                 shutil.rmtree(root_dir / submission_id)
                 create()
@@ -178,8 +176,7 @@ class Dispatcher(threading.Thread):
         submission_path: pathlib.Path,
     ) -> BuildPlan:
         strategy = BuildStrategy(meta.buildStrategy)
-        logger().info(
-            f"[build] submission={submission_id} strategy={strategy.name}")
+        logger().info(f"[build] submission={submission_id} strategy={strategy.name}")
         if strategy == BuildStrategy.COMPILE:
             return BuildPlan(needs_make=False)
         if strategy == BuildStrategy.MAKE_NORMAL:
@@ -202,34 +199,57 @@ class Dispatcher(threading.Thread):
         raise BuildStrategyError(f"unsupported build strategy: {strategy}")
 
     def handle(self, submission_id: str, problem_id: int):
-        logger().info(
-            f"receive submission {submission_id} for problem: {problem_id}.")
+        logger().info(f"receive submission {submission_id} for problem: {problem_id}.")
         submission_path = self.SUBMISSION_DIR / submission_id
         if not submission_path.exists():
-            raise FileNotFoundError(
-                f"submission id: {submission_id} file not found.")
+            raise FileNotFoundError(f"submission id: {submission_id} file not found.")
         elif not submission_path.is_dir():
             raise NotADirectoryError(f"{submission_path} is not a directory")
         if self.contains(submission_id):
             raise DuplicatedSubmissionIdError(
-                f"duplicated submission id {submission_id}.")
+                f"duplicated submission id {submission_id}."
+            )
 
         with (submission_path / "meta.json").open() as f:
             submission_config = Meta.parse_obj(json.load(f))
 
-        # [Sidecar]
-        from .meta import Sidecar
-
+        # Network Config Fetching & Check configuration
         network_config = fetch_problem_network_config(problem_id)
         try:
-            sidecars_data = network_config.get("sidecars")
-            if sidecars_data:
-                sidecar_objs = [Sidecar(**s) for s in sidecars_data]
+            sidecars_config = network_config.get("sidecars")
+            if sidecars_config:
+                sidecar_objs = [Sidecar(**s) for s in sidecars_config]
                 self._setup_sidecars(submission_id, sidecar_objs)
         except Exception as e:
             logger().error(f"Sidecar setup failed: {e}")
             return
+        external_config = network_config.get("external", {})
+        router_id = None
 
+        # Set Router or not
+        enable_router_mode = False
+        if external_config:
+            model = external_config.get("model", "black").lower()
+            ip_list = external_config.get("ip", [])
+
+            # use Router when
+            # 1. white model
+            # 2. black model with IPs
+            if model == "white" or (model == "black" and len(ip_list) > 0):
+                enable_router_mode = True
+
+        if enable_router_mode:
+            try:
+                router_id = self._set_router(submission_id, external_config)
+            except Exception as e:
+                self.result[submission_id] = (
+                    submission_config,
+                    build_sa_ce_task_content(
+                        submission_config, f"Network/Router Setup Failed: {e}"
+                    ),
+                )
+                self.on_submission_complete(submission_id)
+                return
         # [Result Init]
         task_content = {}
         self.result[submission_id] = (submission_config, task_content)
@@ -237,6 +257,10 @@ class Dispatcher(threading.Thread):
         self.compile_locks[submission_id] = threading.Lock()
         self.created_at[submission_id] = datetime.now()
         self.build_strategies[submission_id] = submission_config.buildStrategy
+        if router_id:
+            if submission_id not in self.sidecar_resources:
+                self.sidecar_resources[submission_id] = {}
+            self.sidecar_resources[submission_id]["router_id"] = router_id
         logger().debug(f"current submissions: {[*self.result.keys()]}")
 
         # [Build Strategy Plan]
@@ -248,13 +272,11 @@ class Dispatcher(threading.Thread):
                 submission_path=submission_path,
             )
         except (BuildStrategyError, Exception) as exc:
-            logger().warning(
-                f"build strategy failed [id={submission_id}]: {exc}")
+            logger().warning(f"build strategy failed [id={submission_id}]: {exc}")
             # Report CE instead of crashing/raising
             self.result[submission_id] = (
                 submission_config,
-                build_sa_ce_task_content(submission_config,
-                                         f"Build Failed: {exc}"),
+                build_sa_ce_task_content(submission_config, f"Build Failed: {exc}"),
             )
             self.on_submission_complete(submission_id)
             return
@@ -269,15 +291,16 @@ class Dispatcher(threading.Thread):
             if build_plan.finalize:
                 build_plan.finalize()
             if not self.compile_need(submission_config.language):
-                logger().debug(
-                    f"[build] submission={submission_id} marked prebuilt")
+                logger().debug(f"[build] submission={submission_id} marked prebuilt")
                 self.prebuilt_submissions.add(submission_id)
 
         # [Job Dispatching]
         try:
-            if (not needs_build
-                    and not self._is_prebuilt_submission(submission_id)
-                    and self.compile_need(submission_config.language)):
+            if (
+                not needs_build
+                and not self._is_prebuilt_submission(submission_id)
+                and self.compile_need(submission_config.language)
+            ):
                 self.queue.put_nowait(job.Compile(submission_id=submission_id))
 
             for i, task in enumerate(submission_config.tasks):
@@ -296,11 +319,11 @@ class Dispatcher(threading.Thread):
 
     def release(self, submission_id: str):
         for v in (
-                self.result,
-                self.compile_locks,
-                self.compile_results,
-                self.locks,
-                self.created_at,
+            self.result,
+            self.compile_locks,
+            self.compile_results,
+            self.locks,
+            self.created_at,
         ):
             if submission_id in v:
                 del v[submission_id]
@@ -343,8 +366,11 @@ class Dispatcher(threading.Thread):
                 continue
             # get task info
             submission_config, _ = self.result[submission_id]
-            problem_id = (submission_config.problem_id if hasattr(
-                submission_config, "problem_id") else 1)
+            problem_id = (
+                submission_config.problem_id
+                if hasattr(submission_config, "problem_id")
+                else 1
+            )
 
             # [Static Analysis]
             if submission_id not in self.sa_checked:
@@ -352,9 +378,10 @@ class Dispatcher(threading.Thread):
                 try:
                     rules_json = fetch_problem_rules(problem_id)
                     submission_path = self.SUBMISSION_DIR / submission_id
-                    is_zip_mode = (SubmissionMode(
-                        submission_config.submissionMode) == SubmissionMode.ZIP
-                                   )
+                    is_zip_mode = (
+                        SubmissionMode(submission_config.submissionMode)
+                        == SubmissionMode.ZIP
+                    )
                     success, payload, task_content = run_static_analysis(
                         submission_id=submission_id,
                         submission_path=submission_path,
@@ -372,23 +399,28 @@ class Dispatcher(threading.Thread):
                         )
                         self.result[submission_id] = (
                             submission_config,
-                            task_content or build_sa_ce_task_content(
-                                submission_config,
-                                "Static Analysis Not Passed"),
+                            task_content
+                            or build_sa_ce_task_content(
+                                submission_config, "Static Analysis Not Passed"
+                            ),
                         )
                         self.on_submission_complete(submission_id)
                         continue
 
                 except Exception as e:
-                    logger().error(
-                        f"Static Analysis Exception {submission_id}: {e}")
+                    logger().error(f"Static Analysis Exception {submission_id}: {e}")
                     self.sa_checked.add(submission_id)
 
             # [Sidecar] Determine Network Mode
             net_mode = "none"
             if submission_id in self.sidecar_resources:
-                net_mode = self.sidecar_resources[submission_id][
-                    "network_name"]
+                resouces = self.sidecar_resources[submission_id]
+                # Router mode
+                if "router_id" in resouces:
+                    net_mode = f"container:{resouces['router_id']}"
+                # Sidecar mode
+                elif "network_name" in resouces:
+                    net_mode = resouces["network_name"]
 
             # 1. Build Job
             if isinstance(_job, job.Build):
@@ -420,15 +452,16 @@ class Dispatcher(threading.Thread):
                 ).start()
                 continue
             # 3. Execution Job
-            elif (not self._is_prebuilt_submission(submission_id)
-                  and self.compile_need(submission_config.language)
-                  and self.compile_results.get(submission_id) is None):
+            elif (
+                not self._is_prebuilt_submission(submission_id)
+                and self.compile_need(submission_config.language)
+                and self.compile_results.get(submission_id) is None
+            ):
                 self.queue.put(_job)
             else:
                 task_info = submission_config.tasks[_job.task_id]
                 case_no = f"{_job.task_id:02d}{_job.case_id:02d}"
-                logger().info(
-                    f"create container [task={submission_id}/{case_no}]")
+                logger().info(f"create container [task={submission_id}/{case_no}]")
                 logger().debug(f"task info: {task_info}")
                 # output path should be the container path
                 base_path = self.SUBMISSION_DIR / submission_id / "testcase"
@@ -460,6 +493,47 @@ class Dispatcher(threading.Thread):
     def stop(self):
         self.do_run = False
 
+    # [External Helpers]
+    def _set_router(self, submission_id: str, external_config: dict) -> str:
+        """
+        Setup router container for the submission based on external_config.
+        Returns the router container ID.
+        """
+        conf_dir = self.SUBMISSION_DIR / submission_id / ".router"
+        conf_dir.mkdir(parents=True, exist_ok=True)
+        conf_file = conf_dir / "network_ip.json"
+        with open(conf_file, "w") as f:
+            json.dump(external_config, f)
+
+        logger().info(f"Starting Router for {submission_id}")
+        router_img = "normal-oj/sandbox-router:latest"
+        host_config = self.client.create_host_config(
+            cap_add=["NET_ADMIN"],
+            binds={
+                str(conf_file.absolute()): {
+                    "bind": "/etc/network_config/network_ip.json",
+                    "mode": "ro",
+                }
+            },
+            network_mode="bridge",
+        )
+        container = self.client.create_container(
+            image=router_img,
+            name=f"router-{submission_id}",
+            host_config=host_config,
+            detach=True,
+        )
+
+        self.client.start(container)
+
+        # in Router bridge to content sidecar network
+        if submission_id in self.sidecar_resources:
+            net_name = self.sidecar_resources[submission_id].get("network_name")
+            if net_name:
+                self.client.connect_container_to_network(container.get("Id"), net_name)
+
+        return container.get("Id")
+
     # [Sidecar Helpers]
     def _setup_sidecars(self, submission_id: str, sidecars: list):
         # set sidecar containers
@@ -472,11 +546,8 @@ class Dispatcher(threading.Thread):
         for sidecar in sidecars:
             container_name = f"sidecar-{submission_id}-{sidecar.name}"
             try:
-                self.client.remove_container(container_name,
-                                             v=True,
-                                             force=True)
-                logger().warning(
-                    f"Force removed zombie container: {container_name}")
+                self.client.remove_container(container_name, v=True, force=True)
+                logger().warning(f"Force removed zombie container: {container_name}")
             except Exception:
                 pass
 
@@ -490,13 +561,11 @@ class Dispatcher(threading.Thread):
 
         # build network
         try:
-            network = self.client.create_network(name=net_name,
-                                                 driver="bridge",
-                                                 internal=True,
-                                                 check_duplicate=True)
+            network = self.client.create_network(
+                name=net_name, driver="bridge", internal=True, check_duplicate=True
+            )
         except Exception as e:
-            logger().error(
-                f"Failed to create network for {submission_id}: {e}")
+            logger().error(f"Failed to create network for {submission_id}: {e}")
             raise
 
         container_ids = []
@@ -505,9 +574,7 @@ class Dispatcher(threading.Thread):
         try:
             for sidecar in sidecars:
                 # self.client.pull(sidecar.image) # Optional
-                env_list = [
-                    f"{key}={value}" for key, value in sidecar.env.items()
-                ]
+                env_list = [f"{key}={value}" for key, value in sidecar.env.items()]
                 host_config = self.client.create_host_config(
                     network_mode=net_name,
                     restart_policy={"Name": "no"},
@@ -519,11 +586,13 @@ class Dispatcher(threading.Thread):
                     hostname=sidecar.name,  # Corrected arg name from host_name
                     name=f"sidecar-{submission_id}-{sidecar.name}",
                     host_config=host_config,
-                    networking_config=self.client.create_networking_config({
-                        net_name:
-                        self.client.create_endpoint_config(
-                            aliases=[sidecar.name])
-                    }),
+                    networking_config=self.client.create_networking_config(
+                        {
+                            net_name: self.client.create_endpoint_config(
+                                aliases=[sidecar.name]
+                            )
+                        }
+                    ),
                 )
                 cid = container.get("Id")
                 container_ids.append(cid)
@@ -538,19 +607,26 @@ class Dispatcher(threading.Thread):
             }
         except Exception as e:
             logger().error(f"Error setting up sidecars: {e}")
-            self._cleanup_sidecars(submission_id,
-                                   partial_ids=container_ids,
-                                   partial_net=net_name)
+            self._cleanup_sidecars(
+                submission_id, partial_ids=container_ids, partial_net=net_name
+            )
             raise
 
-    def _cleanup_sidecars(self,
-                          submission_id: str,
-                          partial_ids=None,
-                          partial_net=None):
+    def _cleanup_sidecars(self, submission_id: str, partial_ids=None, partial_net=None):
         res = self.sidecar_resources.pop(submission_id, None)
-        c_ids = res["container_ids"] if res else (partial_ids or [])
-        net_name = res["network_name"] if res else (partial_net)
 
+        c_ids = res.get("container_ids", []) if res else (partial_ids or [])
+        net_name = res.get("network_name") if res else (partial_net)
+        router_id = res.get("router_id") if res else None
+
+        # Remove router if exists
+        if router_id:
+            try:
+                self.client.remove_container(router_id, v=True, force=True)
+                logger().debug(f"Removed router container: {router_id}")
+            except Exception:
+                pass
+        # Remove sidecar containers and network
         if c_ids:
             for cid in c_ids:
                 try:
@@ -571,12 +647,13 @@ class Dispatcher(threading.Thread):
     ):
         if self.compile_locks[submission_id].locked():
             logger().error(
-                f"start a compile thread on locked submission {submission_id}")
+                f"start a compile thread on locked submission {submission_id}"
+            )
             return
         if not self.compile_need(lang):
             logger().warning(
-                f"try to compile submission {submission_id}"
-                f" with language {lang}", )
+                f"try to compile submission {submission_id}" f" with language {lang}",
+            )
             return
         with self.compile_locks[submission_id]:
             logger().info(f"start compiling {submission_id}")
@@ -603,8 +680,7 @@ class Dispatcher(threading.Thread):
         if lock is None:
             return
         if lock.locked():
-            logger().error(
-                f"start a build thread on locked submission {submission_id}")
+            logger().error(f"start a build thread on locked submission {submission_id}")
             return
 
         with lock:
@@ -660,8 +736,9 @@ class Dispatcher(threading.Thread):
         if ExecutionMode(execution_mode) == ExecutionMode.INTERACTIVE:
             # Fetch teacher language from meta (set by backend) to avoid running teacher with student lang.
             submission_config, _ = self.result.get(submission_id, (None, None))
-            teacher_lang_val = (getattr(submission_config, "assetPaths", {})
-                                or {}).get("teacherLang")
+            teacher_lang_val = (getattr(submission_config, "assetPaths", {}) or {}).get(
+                "teacherLang"
+            )
             mapping = {"c": "c11", "cpp": "cpp17", "py": "python3"}
             teacher_lang_key = mapping.get(str(teacher_lang_val or "").lower())
             if teacher_lang_key is None:
@@ -742,8 +819,7 @@ class Dispatcher(threading.Thread):
         prob_status: str,
     ):
         if submission_id not in self.result:
-            raise SubmissionIdNotFoundError(
-                f"Unexisted id {submission_id} recieved")
+            raise SubmissionIdNotFoundError(f"Unexisted id {submission_id} recieved")
         _, results = self.result[submission_id]
         if case_no not in results:
             raise ValueError(f"Unexisted case {case_no} recieved")
@@ -801,11 +877,11 @@ class Dispatcher(threading.Thread):
                 json=submission_data,
             )
             logger().debug(
-                f"get BE response: [{resp.status_code}] {resp.text}", )
+                f"get BE response: [{resp.status_code}] {resp.text}",
+            )
             if resp.ok:
                 file_manager.clean_data(submission_id)
             else:
                 file_manager.backup_data(submission_id)
         except Exception as e:
-            logger().info(
-                f"Report to backend failed (Expected in local test): {e}")
+            logger().info(f"Report to backend failed (Expected in local test): {e}")

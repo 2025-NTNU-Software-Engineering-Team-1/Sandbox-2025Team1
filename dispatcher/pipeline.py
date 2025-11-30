@@ -2,7 +2,8 @@ import json
 import requests as rq
 
 from .utils import (
-    logger, )
+    logger,
+)
 from .config import (
     BACKEND_API,
     SANDBOX_TOKEN,
@@ -51,18 +52,16 @@ def fetch_problem_rules(problem_id: int) -> dict:
 
         return data
     except ValueError:
-        logger().warning(
-            f"Not found problem rules, [problem_id: {problem_id}]")
+        logger().warning(f"Not found problem rules, [problem_id: {problem_id}]")
         return {}
     except Exception as e:
-        logger().error(
-            f"Error during fetch problem rules, [problem_id: {problem_id}]")
+        logger().error(f"Error during fetch problem rules, [problem_id: {problem_id}]")
         return {}
 
 
 def fetch_problem_network_config(problem_id: int) -> dict:
     """
-    Fetch network configuration (sidecars & ACLs) from backend server
+    Fetch network configuration (sidecars & external) from backend server
     Similar to fetch_problem_rules
     """
     logger().debug(f"fetch problem network config [problem_id: {problem_id}]")
@@ -76,8 +75,7 @@ def fetch_problem_network_config(problem_id: int) -> dict:
         handle_problem_response(resp)
         return resp.json().get("data", {})
     except ValueError:
-        logger().warning(
-            f"Not found network config, [problem_id: {problem_id}]")
+        logger().warning(f"Not found network config, [problem_id: {problem_id}]")
         return {}
     except Exception as e:
         logger().error(f"Error fetching network config: {e}")
