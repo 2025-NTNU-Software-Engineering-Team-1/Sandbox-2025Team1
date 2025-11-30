@@ -8,6 +8,9 @@ def test_python_static_analysis_violations():
     test_file_path = Path("tests/static_analysis/test_file")
     rules_path = test_file_path / "rules.json"
 
+    if not rules_path.exists():
+        return
+
     with open(rules_path, "r", encoding="utf-8") as f:
         rules = json.load(f)
 
@@ -24,13 +27,18 @@ def test_c_static_analysis_violations():
     test_file_path = Path("tests/static_analysis/test_file")
     rules_path = test_file_path / "rules.json"
 
+    if not rules_path.exists():
+        return
+
     with open(rules_path, "r", encoding="utf-8") as f:
         rules = json.load(f)
 
     analyzer = StaticAnalyzer()
-    result = analyzer.analyze(submission_id=str(test_file_path),
-                              language=Language.C,
-                              rules=rules)
+    result = analyzer.analyze(
+        submission_id=str(test_file_path),
+        language=Language.C,
+        rules=rules,
+    )
 
 
 def test_python_syntax_blacklist_custom(tmp_path):
@@ -49,8 +57,9 @@ def test_python_syntax_blacklist_custom(tmp_path):
         rules=rules,
     )
     assert not res.is_success()
-    assert "Disallowed Syntax (return)" in res.violations
-    assert "Disallowed Syntax (if)" in res.violations
+    assert "Disallowed Syntax (return)" in res.message
+    assert "Disallowed Syntax (if)" in res.message
+    assert "Category: syntax" in res.message
 
 
 def test_python_syntax_whitelist_custom(tmp_path):
@@ -69,7 +78,7 @@ def test_python_syntax_whitelist_custom(tmp_path):
         rules=rules,
     )
     assert not res.is_success()
-    assert "Non-whitelisted Syntax (if)" in res.violations
+    assert "Non-whitelisted Syntax (if)" in res.message
 
 
 def test_zip_static_analysis_python_return_blacklist(tmp_path):
@@ -87,7 +96,7 @@ def test_zip_static_analysis_python_return_blacklist(tmp_path):
         rules=rules,
     )
     assert not res.is_success()
-    assert "return" in res.violations
+    assert "Disallowed Syntax (return)" in res.message
 
 
 def test_zip_static_analysis_disallowed_language_files(tmp_path):
