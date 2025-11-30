@@ -78,25 +78,30 @@ def test_start_dispatcher(docker_dispatcher):
     docker_dispatcher.start()
     assert docker_dispatcher.is_alive()
     docker_dispatcher.stop()
-    docker_dispatcher.join(timeout=1)
+    docker_dispatcher.join(timeout=3)
     assert not docker_dispatcher.is_alive()
 
 
 def _mock_pipeline(monkeypatch):
     # Mock pipeline functions to avoid backend requests
-    monkeypatch.setattr(dispatcher.pipeline, "fetch_problem_rules",
-                        lambda *args, **kwargs: {})
-    monkeypatch.setattr(dispatcher.pipeline, "fetch_problem_network_config",
-                        lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        dispatcher.pipeline, "fetch_problem_rules", lambda *args, **kwargs: {}
+    )
+    monkeypatch.setattr(
+        dispatcher.pipeline, "fetch_problem_network_config", lambda *args, **kwargs: {}
+    )
     # Also mock internal calls within dispatcher
-    monkeypatch.setattr("dispatcher.dispatcher.fetch_problem_rules",
-                        lambda *args, **kwargs: {})
-    monkeypatch.setattr("dispatcher.dispatcher.fetch_problem_network_config",
-                        lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        "dispatcher.dispatcher.fetch_problem_rules", lambda *args, **kwargs: {}
+    )
+    monkeypatch.setattr(
+        "dispatcher.dispatcher.fetch_problem_network_config", lambda *args, **kwargs: {}
+    )
 
 
-def test_normal_submission_handle(docker_dispatcher: Dispatcher,
-                                  submission_generator, monkeypatch, tmp_path):
+def test_normal_submission_handle(
+    docker_dispatcher: Dispatcher, submission_generator, monkeypatch, tmp_path
+):
     """
     Test the handle() method for a normal submission flow.
     """
@@ -108,13 +113,10 @@ def test_normal_submission_handle(docker_dispatcher: Dispatcher,
 
     meta = Meta(
         language=Language.PY,
-        tasks=[
-            Task(taskScore=100, memoryLimit=128, timeLimit=1000, caseCount=1)
-        ],
+        tasks=[Task(taskScore=100, memoryLimit=128, timeLimit=1000, caseCount=1)],
         submissionMode=SubmissionMode.CODE,
         executionMode=ExecutionMode.GENERAL,
-        buildStrategy=BuildStrategy.
-        COMPILE,  # Python doesn't build, but consistent with flow
+        buildStrategy=BuildStrategy.COMPILE,  # Python doesn't build, but consistent with flow
     )
     (sub_dir / "meta.json").write_text(json.dumps(meta.dict()))
 
@@ -131,8 +133,9 @@ def test_normal_submission_handle(docker_dispatcher: Dispatcher,
         assert job.submission_id == sub_id
 
 
-def test_handle_duplicated_submission(docker_dispatcher: Dispatcher, tmp_path,
-                                      monkeypatch):
+def test_handle_duplicated_submission(
+    docker_dispatcher: Dispatcher, tmp_path, monkeypatch
+):
     _mock_pipeline(monkeypatch)
 
     sub_id = "dup-sub"
@@ -141,9 +144,7 @@ def test_handle_duplicated_submission(docker_dispatcher: Dispatcher, tmp_path,
 
     meta = Meta(
         language=Language.C,
-        tasks=[
-            Task(taskScore=100, memoryLimit=128, timeLimit=1000, caseCount=1)
-        ],
+        tasks=[Task(taskScore=100, memoryLimit=128, timeLimit=1000, caseCount=1)],
         submissionMode=SubmissionMode.CODE,
         executionMode=ExecutionMode.GENERAL,
         buildStrategy=BuildStrategy.COMPILE,
@@ -156,8 +157,9 @@ def test_handle_duplicated_submission(docker_dispatcher: Dispatcher, tmp_path,
         docker_dispatcher.handle(sub_id, 1)
 
 
-def test_handle_triggers_background_pull(docker_dispatcher: Dispatcher,
-                                         monkeypatch, tmp_path):
+def test_handle_triggers_background_pull(
+    docker_dispatcher: Dispatcher, monkeypatch, tmp_path
+):
     """
     Verify that handle starts a background thread to pull images
     """
@@ -176,9 +178,7 @@ def test_handle_triggers_background_pull(docker_dispatcher: Dispatcher,
     sub_dir.mkdir(parents=True)
     meta = Meta(
         language=Language.PY,
-        tasks=[
-            Task(taskScore=100, memoryLimit=128, timeLimit=1000, caseCount=1)
-        ],
+        tasks=[Task(taskScore=100, memoryLimit=128, timeLimit=1000, caseCount=1)],
         submissionMode=SubmissionMode.CODE,
         executionMode=ExecutionMode.GENERAL,
         buildStrategy=BuildStrategy.COMPILE,
@@ -210,9 +210,7 @@ def test_handle_triggers_background_pull(docker_dispatcher: Dispatcher,
 def _zip_meta(language: Language, strategy: BuildStrategy) -> Meta:
     return Meta(
         language=language,
-        tasks=[
-            Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)
-        ],
+        tasks=[Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)],
         submissionMode=SubmissionMode.ZIP,
         executionMode=ExecutionMode.GENERAL,
         buildStrategy=strategy,
@@ -256,9 +254,7 @@ def test_make_normal_finalize_requires_aout(tmp_path):
 def _function_only_meta(language: Language) -> Meta:
     return Meta(
         language=language,
-        tasks=[
-            Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)
-        ],
+        tasks=[Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)],
         submissionMode=SubmissionMode.CODE,
         executionMode=ExecutionMode.FUNCTION_ONLY,
         buildStrategy=BuildStrategy.MAKE_FUNCTION_ONLY,
@@ -353,9 +349,7 @@ def test_build_failure_clears_submission(monkeypatch, tmp_path):
     submission_id = "build-ce"
     meta = Meta(
         language=Language.C,
-        tasks=[
-            Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)
-        ],
+        tasks=[Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)],
         submissionMode=SubmissionMode.CODE,
         executionMode=ExecutionMode.GENERAL,
         buildStrategy=BuildStrategy.MAKE_NORMAL,
@@ -372,21 +366,23 @@ def test_build_failure_clears_submission(monkeypatch, tmp_path):
         finalize=None,
     )
     dispatcher_obj.queue.put(
-        dispatcher_job.Execute(submission_id=submission_id,
-                               task_id=0,
-                               case_id=0))
+        dispatcher_job.Execute(submission_id=submission_id, task_id=0, case_id=0)
+    )
 
     class DummyResp:
         ok = True
         status_code = 200
         text = "ok"
 
-    monkeypatch.setattr("dispatcher.dispatcher.requests.put",
-                        lambda *args, **kwargs: DummyResp())
-    monkeypatch.setattr("dispatcher.dispatcher.file_manager.clean_data",
-                        lambda *_: None)
-    monkeypatch.setattr("dispatcher.dispatcher.file_manager.backup_data",
-                        lambda *_: None)
+    monkeypatch.setattr(
+        "dispatcher.dispatcher.requests.put", lambda *args, **kwargs: DummyResp()
+    )
+    monkeypatch.setattr(
+        "dispatcher.dispatcher.file_manager.clean_data", lambda *_: None
+    )
+    monkeypatch.setattr(
+        "dispatcher.dispatcher.file_manager.backup_data", lambda *_: None
+    )
 
     def fake_build(self):
         return {
@@ -397,7 +393,8 @@ def test_build_failure_clears_submission(monkeypatch, tmp_path):
         }
 
     monkeypatch.setattr(
-        "dispatcher.dispatcher.SubmissionRunner.build_with_make", fake_build)
+        "dispatcher.dispatcher.SubmissionRunner.build_with_make", fake_build
+    )
 
     dispatcher_obj.build(submission_id=submission_id, lang=Language.C)
     assert not dispatcher_obj.contains(submission_id)
