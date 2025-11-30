@@ -413,13 +413,13 @@ class StaticAnalyzer:
             "syntax": [],
         }
 
-        for p, tree in parsed_trees:
+        for tree, path in parsed_trees:
             visitor = PythonAstVisitor(
                 global_functions=global_funcs,
                 defined_classes=defined_classes,
             )
             visitor.visit(tree)
-            visitor.detect_cycle()
+            visitor.detect_cycles()
             _merge_facts(facts, visitor.facts)
 
         logger().debug(f"Python analysis facts: {facts}")
@@ -492,7 +492,7 @@ class StaticAnalyzer:
 
             visitor = CppAstVisitor(str(target_path))
             visitor.visit(translation_unit.cursor)
-            visitor.detect_cycle()
+            visitor.detect_cycles()
             _merge_facts(facts, visitor.facts)
         logger().debug(f"C/C++ analysis facts: {facts}")
 
@@ -653,7 +653,6 @@ class PythonAstVisitor(ast.NodeVisitor):
         return None
 
     def visit_Import(self, node):
-        self._record_tag(node)
         for alias in node.names:
             self.facts["imports"].append({
                 "name": alias.name,
@@ -661,7 +660,6 @@ class PythonAstVisitor(ast.NodeVisitor):
             })
 
     def visit_ImportFrom(self, node):
-        self._record_tag(node)
         if node.module:
             self.facts["imports"].append({
                 "name": node.module,

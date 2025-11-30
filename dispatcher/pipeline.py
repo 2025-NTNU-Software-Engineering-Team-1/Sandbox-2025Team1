@@ -2,8 +2,7 @@ import json
 import requests as rq
 
 from .utils import (
-    logger,
-)
+    logger, )
 from .config import (
     BACKEND_API,
     SANDBOX_TOKEN,
@@ -12,6 +11,9 @@ from .config import (
 
 RULES_DIR = TESTDATA_ROOT / "rules"
 RULES_DIR.mkdir(exist_ok=True, parents=True)
+
+NETWORK_DIR = TESTDATA_ROOT / "network"
+NETWORK_DIR.mkdir(exist_ok=True)
 
 
 def handle_problem_response(resp: rq.Response):
@@ -52,10 +54,12 @@ def fetch_problem_rules(problem_id: int) -> dict:
 
         return data
     except ValueError:
-        logger().warning(f"Not found problem rules, [problem_id: {problem_id}]")
+        logger().warning(
+            f"Not found problem rules, [problem_id: {problem_id}]")
         return {}
     except Exception as e:
-        logger().error(f"Error during fetch problem rules, [problem_id: {problem_id}]")
+        logger().error(
+            f"Error during fetch problem rules, [problem_id: {problem_id}]")
         return {}
 
 
@@ -64,6 +68,16 @@ def fetch_problem_network_config(problem_id: int) -> dict:
     Fetch network configuration (sidecars & external) from backend server
     Similar to fetch_problem_rules
     """
+    # for debugging: load local network config if available
+    local_path = NETWORK_DIR / f"{problem_id}.json"
+    if local_path.exists():
+        logger().debug(f"loading local network config for {problem_id}")
+        try:
+            with open(local_path, "r") as f:
+                return json.load(f)
+        except:
+            pass
+    # ---------------------------
     logger().debug(f"fetch problem network config [problem_id: {problem_id}]")
     resp = rq.get(
         f"{BACKEND_API}/problem/{problem_id}/network",
@@ -75,7 +89,8 @@ def fetch_problem_network_config(problem_id: int) -> dict:
         handle_problem_response(resp)
         return resp.json().get("data", {})
     except ValueError:
-        logger().warning(f"Not found network config, [problem_id: {problem_id}]")
+        logger().warning(
+            f"Not found network config, [problem_id: {problem_id}]")
         return {}
     except Exception as e:
         logger().error(f"Error fetching network config: {e}")

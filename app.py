@@ -41,7 +41,8 @@ def submit(submission_id: str):
     problem_id = request.form.get("problem_id", type=int)
     if problem_id is None:
         return "missing problen id", 400
-    ensure_testdata(problem_id)
+    # for debug
+    # ensure_testdata(problem_id)
     language = Language(request.form.get("language", type=int))
     try:
         DISPATCHER.prepare_submission_dir(
@@ -91,3 +92,7 @@ def status():
             "running": DISPATCHER.do_run,
         })
     return jsonify(ret), 200
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
