@@ -25,6 +25,31 @@ class NetworkController:
             )
             self.client = None
 
+    def ensure_sidecar_images(self, sidecars: list[Sidecar]):
+        """
+        Check if required sidecar images exist locally; pull if missing.
+        This is designed to run in a separate thread to avoid blocking.
+        """
+        if not self.client or not sidecars:
+            return
+        for sidecar in sidecars:
+            try:
+                self.client.inspect_image(sidecar.image)
+            except docker.errors.ImageNotFound:
+                logger().info(
+                    f"[Pre-pull] Image {sidecar.image} not found, pulling...")
+                try:
+                    self.client.pull(sidecar.image)
+                    logger().info(
+                        f"[Pre-pull] Successfully pulled {sidecar.image}")
+                except Exception as e:
+                    logger().error(
+                        f"[Pre-pull] Failed to pull image {sidecar.image}: {e}"
+                    )
+            except Exception as e:
+                logger().warning(
+                    f"[Pre-pull] Error checking image {sidecar.image}: {e}")
+
     def setup_router(self, submission_id: str, config_data: dict) -> str:
         """
         Setup router container for the submission based on external_config.
@@ -55,7 +80,7 @@ class NetworkController:
             network_mode="bridge",
         )
 
-        container = self.client.containers(
+        container = self.client.create_container(
             image=router_img,
             name=f"router-{submission_id}",
             host_config=host_config,
@@ -143,13 +168,14 @@ class NetworkController:
             for idx, sidecar in enumerate(sidecars):
                 logger().debug(
                     f"starting sidecar {sidecar.image} for {submission_id}")
+
                 env_list = [f"{k}={v}" for k, v in sidecar.env.items()]
 
                 host_config = self.client.create_host_config(
                     network_mode=net_name,
                     restart_policy={"Name": "no"},
                 )
-                container = self.client.containers(
+                container = self.client.create_container(
                     image=sidecar.image,
                     environment=env_list,
                     command=sidecar.args,
@@ -165,7 +191,7 @@ class NetworkController:
                 container_ids.append(cid)
                 self.client.start(container)
 
-            time.sleep(2)  # wait for sidecars to initialize
+            time.sleep(10)  # wait for sidecars to initialize
 
             self.sidecar_resources[submission_id] = {
                 "network_name": net_name,

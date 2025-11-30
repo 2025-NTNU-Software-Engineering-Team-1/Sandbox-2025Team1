@@ -11,6 +11,11 @@ nft add table inet filter
 nft add chain inet filter output { type filter hook output priority 0 \; policy accept \; }
 nft add chain inet filter student_out
 
+
+nft add table nat
+nft add chain nat postrouting { type nat hook postrouting priority 100 \; }
+nft add rule nat postrouting oifname "eth0" masquerade
+
 # 2. base rules
 nft add rule inet filter output oifname "lo" accept  # allow localhost
 nft add rule inet filter output ct state established,related accept # allow established/related packets

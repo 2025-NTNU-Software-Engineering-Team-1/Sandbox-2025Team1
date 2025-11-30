@@ -14,6 +14,8 @@ docker build -t noj-c-cpp -f c_cpp_dockerfile . --no-cache
 docker build -t noj-py3 -f python3_dockerfile . --no-cache
 docker build -t noj-interactive -f interactive_dockerfile . --no-cache
 
+docker build -t normal-oj/sandbox-router:latest router/ --no-cache
+
 # create submissions folder
-mkdir submissions
+mkdir -p submissions
 echo -e "\033[31mReplace working_dir in .config/submission.json with '$(pwd)/submissions'.\033[0m"

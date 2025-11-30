@@ -38,6 +38,7 @@ class Dispatcher(threading.Thread):
     ):
         super().__init__()
         self.testing = False
+        self.daemon = True
         # read config
         queue_limit, container_limit = config.get_dispatcher_limits(
             dispatcher_config)
@@ -221,6 +222,19 @@ class Dispatcher(threading.Thread):
         sidecars_config = network_config.get("sidecars") or []
         router_id = None
 
+        # check sidecar image pull
+        if sidecars_config:
+            try:
+                sidecar_objs_for_pull = [Sidecar(**s) for s in sidecars_config]
+                threading.Thread(
+                    target=self.network_controller.ensure_sidecar_images,
+                    args=(sidecar_objs_for_pull, ),
+                    daemon=True,
+                ).start()
+            except Exception as e:
+                logger().warning(
+                    f"Failed to trigger background image pull: {e}")
+
         try:
             if sidecars_config:
                 sidecar_objs = [Sidecar(**s) for s in sidecars_config]
@@ -384,7 +398,8 @@ class Dispatcher(threading.Thread):
             submission_config, _ = self.result[submission_id]
             problem_id = (submission_config.problem_id if hasattr(
                 submission_config, "problem_id") else 1)
-
+            """
+            # [FOR DEBUG]
             # [Static Analysis]
             if submission_id not in self.sa_checked:
                 logger().debug(f"Running static analysis for {submission_id}")
@@ -422,7 +437,7 @@ class Dispatcher(threading.Thread):
                     logger().error(
                         f"Static Analysis Exception {submission_id}: {e}")
                     self.sa_checked.add(submission_id)
-
+            """
             # [Sidecar] Determine Network Mode
             net_mode = self.network_controller.get_network_mode(submission_id)
 

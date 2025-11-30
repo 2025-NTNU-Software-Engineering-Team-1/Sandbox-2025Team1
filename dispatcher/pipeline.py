@@ -31,13 +31,14 @@ def fetch_problem_rules(problem_id: int) -> dict:
     """
     Fetch static analysis rules.json from backend server
     """
+    # for local debug
     rule_path = RULES_DIR / f"{problem_id}.json"
     if rule_path.exists():
         try:
             return json.load(rule_path.open())
         except json.JSONDecodeError:
             pass
-
+    # ---------------------------
     logger().debug(f"fetch problem rules [problem_id: {problem_id}]")
     resp = rq.get(
         f"{BACKEND_API}/problem/{problem_id}/rules",
@@ -48,10 +49,6 @@ def fetch_problem_rules(problem_id: int) -> dict:
     try:
         handle_problem_response(resp)
         data = resp.json().get("data", {})
-
-        with rule_path.open("w") as f:
-            json.dump(data, f)
-
         return data
     except ValueError:
         logger().warning(
@@ -68,7 +65,7 @@ def fetch_problem_network_config(problem_id: int) -> dict:
     Fetch network configuration (sidecars & external) from backend server
     Similar to fetch_problem_rules
     """
-    # for debugging: load local network config if available
+    # for local debug
     local_path = NETWORK_DIR / f"{problem_id}.json"
     if local_path.exists():
         logger().debug(f"loading local network config for {problem_id}")

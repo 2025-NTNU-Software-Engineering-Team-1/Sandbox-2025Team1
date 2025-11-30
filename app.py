@@ -12,7 +12,10 @@ from dispatcher.testdata import (
 )
 from dispatcher.config import SANDBOX_TOKEN, SUBMISSION_DIR
 
-logging.basicConfig(filename="logs/sandbox.log")
+logging.basicConfig(
+    filename="logs/sandbox.log",
+    level=logging.DEBUG,
+)
 app = Flask(__name__)
 if __name__ != "__main__":
     # let flask app use gunicorn's logger
@@ -41,8 +44,7 @@ def submit(submission_id: str):
     problem_id = request.form.get("problem_id", type=int)
     if problem_id is None:
         return "missing problen id", 400
-    # for debug
-    # ensure_testdata(problem_id)
+    ensure_testdata(problem_id)
     language = Language(request.form.get("language", type=int))
     try:
         DISPATCHER.prepare_submission_dir(
@@ -94,5 +96,6 @@ def status():
     return jsonify(ret), 200
 
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+# for local debug
+# if __name__ == "__main__":
+#     app.run(host="0.0.0.0", port=5000, debug=True)
