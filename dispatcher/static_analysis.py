@@ -676,14 +676,6 @@ class PythonAstVisitor(ast.NodeVisitor):
             })
         self.generic_visit(node)
 
-    def visit_For(self, node):
-        self.facts["syntax"].append({"name": "for", "line": node.lineno})
-        self.generic_visit(node)
-
-    def visit_While(self, node):
-        self.facts["syntax"].append({"name": "while", "line": node.lineno})
-        self.generic_visit(node)
-
     def visit_FunctionDef(self, node):
         current_function_name = node.name
         self.current_function_stack.append(current_function_name)
