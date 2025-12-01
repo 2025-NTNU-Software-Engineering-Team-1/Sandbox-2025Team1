@@ -2,6 +2,7 @@ import io
 import threading
 import zipfile
 from datetime import datetime
+from pathlib import Path
 from dispatcher.dispatcher import Dispatcher
 from dispatcher.custom_checker import run_custom_checker_case
 from dispatcher.exception import *
@@ -364,3 +365,78 @@ def test_custom_checker_missing_asset_sets_error():
     )
     assert dispatcher.custom_checker_info[submission_id]["enabled"] is True
     assert "missing" in dispatcher.custom_checker_info[submission_id]["error"]
+
+
+def test_prepare_custom_scorer_disabled_when_not_configured():
+    dispatcher = Dispatcher()
+    submission_id = "scorer-disabled"
+    meta = Meta(
+        language=Language.PY,
+        tasks=[
+            Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)
+        ],
+        submissionMode=SubmissionMode.CODE,
+        executionMode=ExecutionMode.GENERAL,
+        buildStrategy=BuildStrategy.COMPILE,
+        scoringScript=False,
+        assetPaths={},
+    )
+    dispatcher.custom_scorer_info = {}
+    dispatcher._prepare_custom_scorer(
+        submission_id=submission_id,
+        problem_id=1,
+        meta=meta,
+        submission_path=dispatcher.SUBMISSION_DIR / submission_id,
+    )
+    assert dispatcher.custom_scorer_info[submission_id]["enabled"] is False
+
+
+def test_run_custom_scorer_payload(monkeypatch):
+    dispatcher = Dispatcher()
+    submission_id = "score-sub"
+    dispatcher.problem_ids[submission_id] = 99
+    dispatcher.custom_scorer_info[submission_id] = {
+        "enabled": True,
+        "scorer_path": Path("/tmp/score.py"),
+        "image": "noj-custom-checker-scorer",
+    }
+    meta = Meta(
+        language=Language.C,
+        tasks=[
+            Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)
+        ],
+        submissionMode=SubmissionMode.CODE,
+        executionMode=ExecutionMode.GENERAL,
+        buildStrategy=BuildStrategy.COMPILE,
+        scoringScript=True,
+    )
+    monkeypatch.setattr(dispatcher, "_fetch_late_seconds", lambda _sid: 0)
+    monkeypatch.setattr(
+        "dispatcher.dispatcher.run_custom_scorer",
+        lambda **kwargs: {
+            "status": "OK",
+            "score": 77,
+            "message": "ok",
+            "breakdown": {
+                "partial": [77]
+            },
+            "stdout": "out",
+            "stderr": "",
+        },
+    )
+    scoring_payload, status_override = dispatcher._run_custom_scorer_if_needed(
+        submission_id=submission_id,
+        meta=meta,
+        submission_result=[[{
+            "status": "AC",
+            "execTime": 10,
+            "memoryUsage": 20
+        }]],
+        sa_payload={"status": "pass"},
+        checker_payload=None,
+    )
+    assert scoring_payload["score"] == 77
+    assert scoring_payload["status"] == "OK"
+    assert scoring_payload["breakdown"] == {"partial": [77]}
+    assert scoring_payload["message"] == "ok"
+    assert status_override is None

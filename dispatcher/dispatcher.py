@@ -27,6 +27,7 @@ from .pipeline import fetch_problem_rules
 
 from .static_analysis import run_static_analysis, build_sa_ce_task_content
 from .custom_checker import ensure_custom_checker, run_custom_checker_case
+from .custom_scorer import ensure_custom_scorer, run_custom_scorer
 
 
 class Dispatcher(threading.Thread):
@@ -56,6 +57,7 @@ class Dispatcher(threading.Thread):
         self.locks = {}
         self.compile_locks = {}
         self.compile_results = {}
+        self.problem_ids = {}
         # manage containers
         self.MAX_CONTAINER_SIZE = container_limit
         self.container_count_lock = threading.Lock()
@@ -63,9 +65,14 @@ class Dispatcher(threading.Thread):
         # read cwd from submission runner config
         s_config = config.get_submission_config(submission_config)
         self.submission_runner_cwd = pathlib.Path(s_config["working_dir"])
+        self.docker_url = s_config.get("docker_url",
+                                       "unix://var/run/docker.sock")
         self.custom_checker_image = s_config.get("custom_checker_image",
-                                                 "noj-custom-checker")
+                                                 "noj-custom-checker-scorer")
+        self.custom_scorer_image = s_config.get("custom_scorer_image",
+                                                self.custom_checker_image)
         self.custom_checker_info = {}
+        self.custom_scorer_info = {}
         self.checker_payloads = {}
         self.timeout = 300
         self.created_at = {}
@@ -188,6 +195,38 @@ class Dispatcher(threading.Thread):
                 "error": str(exc),
             }
 
+    def _prepare_custom_scorer(
+        self,
+        submission_id: str,
+        problem_id: int,
+        meta: Meta,
+        submission_path: pathlib.Path,
+    ):
+        if not getattr(meta, "scoringScript", False):
+            self.custom_scorer_info[submission_id] = {"enabled": False}
+            return
+        scorer_asset = getattr(meta, "scorerAsset", None) or (getattr(
+            meta, "assetPaths", {}) or {}).get("scoring_script")
+        if not scorer_asset:
+            # 無資產時直接降級為預設計分
+            self.custom_scorer_info[submission_id] = {"enabled": False}
+            return
+        try:
+            scorer_path = ensure_custom_scorer(
+                problem_id=problem_id,
+                submission_path=submission_path,
+            )
+            self.custom_scorer_info[submission_id] = {
+                "enabled": True,
+                "scorer_path": scorer_path,
+                "image": self.custom_scorer_image,
+            }
+        except Exception as exc:
+            self.custom_scorer_info[submission_id] = {
+                "enabled": True,
+                "error": str(exc),
+            }
+
     def _record_checker_message(
         self,
         submission_id: str,
@@ -204,6 +243,170 @@ class Dispatcher(threading.Thread):
             "status": status,
             "message": message,
         })
+
+    def _fetch_late_seconds(self, submission_id: str) -> int:
+        try:
+            resp = requests.get(
+                f"{config.BACKEND_API}/submission/{submission_id}/late-seconds",
+                params={"token": config.SANDBOX_TOKEN},
+            )
+            if not resp.ok:
+                logger().warning(
+                    "late-seconds api failed [id=%s, status=%s, resp=%s]",
+                    submission_id,
+                    resp.status_code,
+                    resp.text,
+                )
+                return -1
+            data = resp.json().get("data", {})
+            late_seconds = data.get("lateSeconds", -1)
+            return int(late_seconds)
+        except Exception as exc:
+            logger().warning("late-seconds api error [id=%s]: %s",
+                             submission_id, exc)
+            return -1
+
+    def _scorer_time_limit_ms(self, meta: Meta) -> int:
+        try:
+            return max(t.timeLimit for t in meta.tasks)
+        except Exception:
+            return 5000
+
+    def _build_scoring_tasks(self, meta: Meta,
+                             submission_result: list) -> tuple[list, int]:
+        tasks_payload = []
+        total_score = 0
+        for idx, task in enumerate(meta.tasks):
+            task_cases = submission_result[idx] if idx < len(
+                submission_result) else []
+            results = []
+            all_ac = True
+            for case_idx, case in enumerate(task_cases):
+                status = case.get("status")
+                if status != "AC":
+                    all_ac = False
+                results.append({
+                    "caseIndex": case_idx,
+                    "status": status,
+                    "runTime": case.get("execTime"),
+                    "memoryUsage": case.get("memoryUsage"),
+                })
+            subtask_score = task.taskScore if (
+                all_ac and len(task_cases) == task.caseCount) else 0
+            total_score += subtask_score
+            tasks_payload.append({
+                "taskIndex": idx,
+                "taskScore": task.taskScore,
+                "caseCount": task.caseCount,
+                "results": results,
+                "subtaskScore": subtask_score,
+            })
+        return tasks_payload, total_score
+
+    def _build_scoring_stats(self, submission_result: list) -> dict:
+        times = []
+        mems = []
+        for task_cases in submission_result:
+            for case in task_cases:
+                t = case.get("execTime")
+                m = case.get("memoryUsage")
+                if isinstance(t, (int, float)) and t >= 0:
+                    times.append(t)
+                if isinstance(m, (int, float)) and m >= 0:
+                    mems.append(m)
+
+        def _agg(vals):
+            if not vals:
+                return (0, 0, 0)
+            return (max(vals), sum(vals) / len(vals), sum(vals))
+
+        max_t, avg_t, sum_t = _agg(times)
+        max_m, avg_m, sum_m = _agg(mems)
+        return {
+            "maxRunTime": max_t,
+            "avgRunTime": round(avg_t, 2) if avg_t else 0,
+            "sumRunTime": sum_t,
+            "maxMemory": max_m,
+            "avgMemory": round(avg_m, 2) if avg_m else 0,
+            "sumMemory": sum_m,
+        }
+
+    def _checker_artifacts_for_scoring(self, checker_payload: dict | None):
+        if not checker_payload:
+            return {}
+        artifacts = checker_payload.get("artifacts") or {}
+        if artifacts:
+            return artifacts
+        return {"payload": checker_payload}
+
+    def _run_custom_scorer_if_needed(
+        self,
+        submission_id: str,
+        meta: Meta,
+        submission_result: list,
+        sa_payload: dict | None,
+        checker_payload: dict | None,
+    ):
+        info = self.custom_scorer_info.get(submission_id) or {"enabled": False}
+        if not info.get("enabled"):
+            return None, None
+        if info.get("error"):
+            return {
+                "status": "JE",
+                "score": 0,
+                "message": info["error"],
+            }, "JE"
+
+        late_seconds = self._fetch_late_seconds(submission_id)
+        tasks_payload, default_total = self._build_scoring_tasks(
+            meta, submission_result)
+        scoring_input = {
+            "submissionId":
+            submission_id,
+            "problemId":
+            self.problem_ids.get(submission_id),
+            "languageType":
+            int(meta.language),
+            "tasks":
+            tasks_payload,
+            "totalScore":
+            default_total,
+            "staticAnalysis":
+            sa_payload,
+            "lateSeconds":
+            late_seconds,
+            "stats":
+            self._build_scoring_stats(submission_result),
+            "checkerArtifacts":
+            self._checker_artifacts_for_scoring(checker_payload),
+        }
+        scorer_path = info.get("scorer_path")
+        image = info.get("image", self.custom_scorer_image)
+        runner_result = run_custom_scorer(
+            scorer_path=scorer_path,
+            payload=scoring_input,
+            time_limit_ms=self._scorer_time_limit_ms(meta),
+            mem_limit_kb=256000,
+            image=image,
+            docker_url=self.docker_url,
+        )
+        status = runner_result.get("status")
+        scoring_payload = {
+            "status": status or "OK",
+            "score": runner_result.get("score", 0),
+            "message": runner_result.get("message", ""),
+        }
+        if runner_result.get("breakdown") is not None:
+            scoring_payload["breakdown"] = runner_result.get("breakdown")
+        artifacts = {}
+        if runner_result.get("stdout"):
+            artifacts["stdout"] = runner_result.get("stdout")
+        if runner_result.get("stderr"):
+            artifacts["stderr"] = runner_result.get("stderr")
+        if artifacts:
+            scoring_payload["artifacts"] = artifacts
+        status_override = "JE" if status == "JE" else None
+        return scoring_payload, status_override
 
     def _handle_build_failure(self, submission_id: str, message: str):
         """Handle build/make failure by clearing queue and finalizing as CE."""
@@ -284,6 +487,7 @@ class Dispatcher(threading.Thread):
 
         submission_mode = SubmissionMode(submission_config.submissionMode)
         is_zip_mode = submission_mode == SubmissionMode.ZIP
+        self.problem_ids[submission_id] = problem_id
 
         # [Start] static analysis
         rules_json = fetch_problem_rules(problem_id)
@@ -308,6 +512,12 @@ class Dispatcher(threading.Thread):
 
         # prepare custom checker if enabled (non-interactive only)
         self._prepare_custom_checker(
+            submission_id=submission_id,
+            problem_id=problem_id,
+            meta=submission_config,
+            submission_path=submission_path,
+        )
+        self._prepare_custom_scorer(
             submission_id=submission_id,
             problem_id=problem_id,
             meta=submission_config,
@@ -384,6 +594,7 @@ class Dispatcher(threading.Thread):
                 self.compile_results,
                 self.locks,
                 self.created_at,
+                self.problem_ids,
         ):
             if submission_id in v:
                 del v[submission_id]
@@ -393,6 +604,7 @@ class Dispatcher(threading.Thread):
         self.build_locks.pop(submission_id, None)
         self.sa_payloads.pop(submission_id, None)
         self.custom_checker_info.pop(submission_id, None)
+        self.custom_scorer_info.pop(submission_id, None)
         self.checker_payloads.pop(submission_id, None)
 
     def run(self):
@@ -745,7 +957,9 @@ class Dispatcher(threading.Thread):
                 f"skip submission post processing in testing [submission_id={submission_id}]"
             )
             return True
-        _, results = self.result[submission_id]
+        meta, results = self.result[submission_id]
+        sa_payload = self.sa_payloads.get(submission_id)
+        checker_payload = self.checker_payloads.get(submission_id)
         # parse results
 
         submission_result = {}
@@ -761,17 +975,27 @@ class Dispatcher(threading.Thread):
             submission_result[task_no] = [*cases.values()]
         assert [*submission_result.keys()] == [*range(len(submission_result))]
         submission_result = [*submission_result.values()]
-        # post data
+
+        scoring_payload, status_override = self._run_custom_scorer_if_needed(
+            submission_id=submission_id,
+            meta=meta,
+            submission_result=submission_result,
+            sa_payload=sa_payload,
+            checker_payload=checker_payload,
+        )
+
         submission_data = {
             "tasks": submission_result,
             "token": config.SANDBOX_TOKEN
         }
-        sa_payload = self.sa_payloads.pop(submission_id, None)
         if sa_payload is not None:
             submission_data["staticAnalysis"] = sa_payload
-        checker_payload = self.checker_payloads.pop(submission_id, None)
         if checker_payload is not None:
             submission_data["checker"] = checker_payload
+        if scoring_payload is not None:
+            submission_data["scoring"] = scoring_payload
+        if status_override:
+            submission_data["statusOverride"] = status_override
         self.release(submission_id)
         logger().info(f"send to BE [submission_id={submission_id}]")
         resp = requests.put(

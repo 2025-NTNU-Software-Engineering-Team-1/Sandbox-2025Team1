@@ -26,6 +26,8 @@ class Meta(BaseModel):
     networkAccessRestriction: Optional[dict] = None
     customChecker: bool = False
     checkerAsset: Optional[str] = None
+    scoringScript: bool = False
+    scorerAsset: Optional[str] = None
 
     @validator('tasks')
     def validate_task(cls, v):

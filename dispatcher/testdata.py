@@ -99,6 +99,13 @@ def get_problem_meta(problem_id: int, language: Language) -> Meta:
     if obj.get("assetPaths",
                {}).get("checker") and not obj.get("checkerAsset"):
         obj["checkerAsset"] = obj["assetPaths"]["checker"]
+    scorer_asset = (obj.get("assetPaths", {}) or {}).get("scoring_script")
+    scoring_script = obj.get("scoringScript", False)
+    if isinstance(scoring_script, dict):
+        scoring_script = scoring_script.get("custom", False)
+    obj["scoringScript"] = bool(scoring_script)
+    if scorer_asset and not obj.get("scorerAsset"):
+        obj["scorerAsset"] = scorer_asset
     return Meta.parse_obj(obj)
 
 

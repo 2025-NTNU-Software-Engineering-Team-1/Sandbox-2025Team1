@@ -13,7 +13,7 @@ chmod +x sandbox_interactive
 docker build -t noj-c-cpp -f c_cpp_dockerfile . --no-cache
 docker build -t noj-py3 -f python3_dockerfile . --no-cache
 docker build -t noj-interactive -f interactive_dockerfile . --no-cache
-docker build -t noj-custom-checker -f custom_checker_dockerfile . --no-cache
+docker build -t noj-custom-checker-scorer -f custom_checker_scorer_dockerfile . --no-cache
 
 # create submissions folder
 mkdir submissions
