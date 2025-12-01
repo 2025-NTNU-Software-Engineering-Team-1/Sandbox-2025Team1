@@ -24,6 +24,8 @@ class Meta(BaseModel):
     assetPaths: Dict[str, str] = Field(default_factory=dict)
     teacherFirst: bool = False
     networkAccessRestriction: Optional[dict] = None
+    customChecker: bool = False
+    checkerAsset: Optional[str] = None
 
     @validator('tasks')
     def validate_task(cls, v):

@@ -3,6 +3,7 @@ import threading
 import zipfile
 from datetime import datetime
 from dispatcher.dispatcher import Dispatcher
+from dispatcher.custom_checker import run_custom_checker_case
 from dispatcher.exception import *
 from dispatcher.constant import BuildStrategy, ExecutionMode, Language, SubmissionMode
 from dispatcher.build_strategy import (
@@ -267,3 +268,99 @@ def test_build_failure_clears_submission(monkeypatch, tmp_path):
     dispatcher.build(submission_id=submission_id, lang=Language.C)
     assert not dispatcher.contains(submission_id)
     assert dispatcher.queue.empty()
+
+
+def test_custom_checker_run(tmp_path):
+    try:
+        import docker
+        client = docker.from_env()
+        client.ping()
+        if not any(img.tags and "python:3.11-slim" in img.tags
+                   for img in client.images.list()):
+            pytest.skip("python:3.11-slim image not available")
+    except Exception:
+        pytest.skip("docker not available")
+    submission_id = "checker-sub"
+    case_no = "0000"
+    checker_path = tmp_path / "custom_checker.py"
+    checker_path.write_text(
+        "import sys\nprint('STATUS: AC')\nprint('MESSAGE: ok')\n")
+    case_in = tmp_path / "input.in"
+    case_ans = tmp_path / "answer.out"
+    case_in.write_text("1")
+    case_ans.write_text("1")
+    result = run_custom_checker_case(
+        submission_id=submission_id,
+        case_no=case_no,
+        checker_path=checker_path,
+        case_in_path=case_in,
+        case_ans_path=case_ans,
+        student_output="1",
+        time_limit_ms=3000,
+        mem_limit_kb=256000,
+        image="python:3.11-slim",
+        docker_url="unix://var/run/docker.sock",
+    )
+    assert result["status"] == "AC"
+    assert "ok" in result["message"]
+
+
+def test_custom_checker_nonzero_exit(tmp_path, monkeypatch):
+    submission_id = "checker-sub-je"
+    case_no = "0001"
+    checker_path = tmp_path / "custom_checker.py"
+    checker_path.write_text(
+        "import sys\nprint('STATUS: AC')\nprint('MESSAGE: ok')\n")
+    case_in = tmp_path / "input.in"
+    case_ans = tmp_path / "answer.out"
+    case_in.write_text("1")
+    case_ans.write_text("1")
+
+    def fake_run(self):
+        return {
+            "exit_code": 1,
+            "stdout": "STATUS: WA\nMESSAGE: bad",
+            "stderr": "boom",
+        }
+
+    monkeypatch.setattr("dispatcher.custom_checker.CustomCheckerRunner.run",
+                        fake_run)
+    result = run_custom_checker_case(
+        submission_id=submission_id,
+        case_no=case_no,
+        checker_path=checker_path,
+        case_in_path=case_in,
+        case_ans_path=case_ans,
+        student_output="1",
+        time_limit_ms=3000,
+        mem_limit_kb=256000,
+        image="python:3.11-slim",
+        docker_url="unix://var/run/docker.sock",
+    )
+    assert result["status"] == "JE"
+    assert "boom" in result["message"]
+
+
+def test_custom_checker_missing_asset_sets_error():
+    dispatcher = Dispatcher()
+    submission_id = "checker-missing"
+    meta = Meta(
+        language=Language.PY,
+        tasks=[
+            Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)
+        ],
+        submissionMode=SubmissionMode.CODE,
+        executionMode=ExecutionMode.GENERAL,
+        buildStrategy=BuildStrategy.COMPILE,
+        customChecker=True,
+        assetPaths={},
+    )
+    dispatcher.custom_checker_info = {}
+    dispatcher._prepare_custom_checker(
+        submission_id=submission_id,
+        problem_id=1,
+        meta=meta,
+        submission_path=dispatcher.SUBMISSION_DIR / submission_id,
+    )
+    assert dispatcher.custom_checker_info[submission_id]["enabled"] is True
+    assert "missing" in dispatcher.custom_checker_info[submission_id]["error"]

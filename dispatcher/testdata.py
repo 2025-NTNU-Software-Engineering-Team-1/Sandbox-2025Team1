@@ -95,6 +95,10 @@ def get_problem_meta(problem_id: int, language: Language) -> Meta:
     obj["buildStrategy"] = int(build_strategy)
     obj.setdefault("assetPaths", {})
     obj.setdefault("teacherFirst", False)
+    obj.setdefault("customChecker", False)
+    if obj.get("assetPaths",
+               {}).get("checker") and not obj.get("checkerAsset"):
+        obj["checkerAsset"] = obj["assetPaths"]["checker"]
     return Meta.parse_obj(obj)
 
 

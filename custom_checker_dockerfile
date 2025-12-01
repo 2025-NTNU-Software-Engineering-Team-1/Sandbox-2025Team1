@@ -1,0 +1,28 @@
+# Custom checker image: Python +常用依賴（可支援圖片/數值處理等）
+
+FROM python:3.11-slim
+
+LABEL org.opencontainers.image.authors="Normal-OJ Maintainers <admin@noj.tw>"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends build-essential pkg-config libjpeg-dev zlib1g-dev libpng-dev libfreetype6-dev libopenblas-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# 常用第三方套件：數值/矩陣/影像/科學運算
+RUN pip install --no-cache-dir \
+    numpy \
+    scipy \
+    pillow \
+    opencv-python-headless \
+    scikit-image \
+    pandas \
+    sympy
+
+WORKDIR /workspace
+
+CMD ["python3"]

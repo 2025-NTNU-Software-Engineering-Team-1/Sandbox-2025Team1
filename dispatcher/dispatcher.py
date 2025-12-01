@@ -26,6 +26,7 @@ from .utils import logger
 from .pipeline import fetch_problem_rules
 
 from .static_analysis import run_static_analysis, build_sa_ce_task_content
+from .custom_checker import ensure_custom_checker, run_custom_checker_case
 
 
 class Dispatcher(threading.Thread):
@@ -62,6 +63,10 @@ class Dispatcher(threading.Thread):
         # read cwd from submission runner config
         s_config = config.get_submission_config(submission_config)
         self.submission_runner_cwd = pathlib.Path(s_config["working_dir"])
+        self.custom_checker_image = s_config.get("custom_checker_image",
+                                                 "noj-custom-checker")
+        self.custom_checker_info = {}
+        self.checker_payloads = {}
         self.timeout = 300
         self.created_at = {}
         self.prebuilt_submissions = set()
@@ -134,6 +139,71 @@ class Dispatcher(threading.Thread):
                 pending.append(job_item)
         for item in pending:
             self.queue.put(item)
+
+    def _use_custom_checker(self, submission_id: str) -> bool:
+        info = self.custom_checker_info.get(submission_id) or {}
+        return bool(info.get("enabled"))
+
+    def _custom_checker_path(self, submission_id: str):
+        info = self.custom_checker_info.get(submission_id) or {}
+        return info.get("checker_path")
+
+    def _prepare_custom_checker(
+        self,
+        submission_id: str,
+        problem_id: int,
+        meta: Meta,
+        submission_path: pathlib.Path,
+    ):
+        if meta.executionMode == ExecutionMode.INTERACTIVE:
+            self.custom_checker_info[submission_id] = {"enabled": False}
+            return
+        if not getattr(meta, "customChecker", False):
+            self.custom_checker_info[submission_id] = {"enabled": False}
+            return
+        if not (getattr(meta, "assetPaths", {}) or {}).get("checker"):
+            self.custom_checker_info[submission_id] = {
+                "enabled": True,
+                "error": "custom checker asset missing",
+            }
+            return
+        try:
+            checker_path = ensure_custom_checker(
+                problem_id=problem_id,
+                submission_path=submission_path,
+                execution_mode=meta.executionMode,
+            )
+            if checker_path:
+                self.custom_checker_info[submission_id] = {
+                    "enabled": True,
+                    "checker_path": checker_path,
+                    "image": self.custom_checker_image,
+                }
+            else:
+                self.custom_checker_info[submission_id] = {"enabled": False}
+        except Exception as exc:
+            # mark enabled to force JE with proper message later
+            self.custom_checker_info[submission_id] = {
+                "enabled": True,
+                "error": str(exc),
+            }
+
+    def _record_checker_message(
+        self,
+        submission_id: str,
+        case_no: str,
+        status: str,
+        message: str,
+    ):
+        payload = self.checker_payloads.setdefault(submission_id, {
+            "type": "custom",
+            "messages": [],
+        })
+        payload["messages"].append({
+            "case": case_no,
+            "status": status,
+            "message": message,
+        })
 
     def _handle_build_failure(self, submission_id: str, message: str):
         """Handle build/make failure by clearing queue and finalizing as CE."""
@@ -236,6 +306,14 @@ class Dispatcher(threading.Thread):
             return
         # [End] static analysis
 
+        # prepare custom checker if enabled (non-interactive only)
+        self._prepare_custom_checker(
+            submission_id=submission_id,
+            problem_id=problem_id,
+            meta=submission_config,
+            submission_path=submission_path,
+        )
+
         # assign submission context
         task_content = {}
         self.result[submission_id] = (submission_config, task_content)
@@ -314,6 +392,8 @@ class Dispatcher(threading.Thread):
         self.build_plans.pop(submission_id, None)
         self.build_locks.pop(submission_id, None)
         self.sa_payloads.pop(submission_id, None)
+        self.custom_checker_info.pop(submission_id, None)
+        self.checker_payloads.pop(submission_id, None)
 
     def run(self):
         self.do_run = True
@@ -495,6 +575,8 @@ class Dispatcher(threading.Thread):
         teacher_first: bool = False,
     ):
         lang_key = ["c11", "cpp17", "python3"][int(lang)]
+        use_custom_checker = self._use_custom_checker(submission_id)
+        checker_info = self.custom_checker_info.get(submission_id, {})
         if ExecutionMode(execution_mode) == ExecutionMode.INTERACTIVE:
             # Fetch teacher language from meta (set by backend) to avoid running teacher with student lang.
             submission_config, _ = self.result.get(submission_id, (None, None))
@@ -537,9 +619,59 @@ class Dispatcher(threading.Thread):
             if res["Status"] != "CE":
                 try:
                     self.inc_container()
-                    res = runner.run()
+                    res = runner.run(skip_diff=use_custom_checker)
                 finally:
                     self.dec_container()
+            if use_custom_checker and checker_info.get("error"):
+                res = {
+                    "Status": "JE",
+                    "Stdout": "",
+                    "Stderr": checker_info.get("error", ""),
+                    "Duration": -1,
+                    "MemUsage": -1,
+                    "DockerExitCode": 1,
+                }
+            if use_custom_checker and res.get("Status") not in {
+                    "CE", "RE", "TLE", "MLE", "OLE", "JE"
+            }:
+                checker_path = self._custom_checker_path(submission_id)
+                if checker_path:
+                    # case_in_path is host path, need to convert to container path for _copy_file
+                    # Host: /home/.../Sandbox/submissions/... → Container: /app/submissions/...
+                    container_in_path = pathlib.Path(
+                        case_in_path.replace(
+                            str(self.submission_runner_cwd.parent),
+                            str(self.SUBMISSION_DIR.parent)))
+                    container_out_path = pathlib.Path(
+                        case_out_path.replace(str(self.SUBMISSION_DIR),
+                                              str(self.SUBMISSION_DIR)))
+
+                    checker_result = run_custom_checker_case(
+                        submission_id=submission_id,
+                        case_no=case_no,
+                        checker_path=checker_path,
+                        case_in_path=container_in_path,
+                        case_ans_path=container_out_path,
+                        student_output=res.get("Stdout", ""),
+                        time_limit_ms=time_limit,
+                        mem_limit_kb=mem_limit,
+                        image=self.custom_checker_image,
+                        docker_url=runner.docker_url,
+                    )
+                    res["Status"] = checker_result["status"]
+                    message = checker_result.get("message", "")
+                    if message:
+                        joined = "\n".join(part for part in [
+                            res.get("Stderr", ""),
+                            f"[custom_checker] {message}"
+                        ] if part)
+                        res["Stderr"] = joined
+                    self._record_checker_message(
+                        submission_id=submission_id,
+                        case_no=case_no,
+                        status=checker_result["status"],
+                        message=message,
+                    )
         logger().info(f"finish task {submission_id}/{case_no}")
         # truncate long stdout/stderr
         _res = res.copy()
@@ -637,6 +769,9 @@ class Dispatcher(threading.Thread):
         sa_payload = self.sa_payloads.pop(submission_id, None)
         if sa_payload is not None:
             submission_data["staticAnalysis"] = sa_payload
+        checker_payload = self.checker_payloads.pop(submission_id, None)
+        if checker_payload is not None:
+            submission_data["checker"] = checker_payload
         self.release(submission_id)
         logger().info(f"send to BE [submission_id={submission_id}]")
         resp = requests.put(

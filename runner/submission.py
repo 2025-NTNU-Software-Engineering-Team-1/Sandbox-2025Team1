@@ -113,7 +113,7 @@ class SubmissionRunner:
                 pass
         return payload
 
-    def run(self):
+    def run(self, skip_diff: bool = False):
         try:
             result = Sandbox(
                 time_limit=self.time_limit,
@@ -131,11 +131,14 @@ class SubmissionRunner:
             ans_output = f.read()
         status = {'TLE', 'MLE', 'RE', 'OLE'}
         if result.Status not in status:
-            result.Status = 'WA'
-            res_outs = self.strip(result.Stdout)
-            ans_outputs = self.strip(ans_output)
-            if res_outs == ans_outputs:
+            if skip_diff:
                 result.Status = 'AC'
+            else:
+                result.Status = 'WA'
+                res_outs = self.strip(result.Stdout)
+                ans_outputs = self.strip(ans_output)
+                if res_outs == ans_outputs:
+                    result.Status = 'AC'
         return dataclasses.asdict(result)
 
     def build_with_make(self):

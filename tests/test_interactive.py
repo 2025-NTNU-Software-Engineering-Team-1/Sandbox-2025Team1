@@ -321,8 +321,30 @@ def test_interactive_teacher_can_write(clean_submission):
 
 
 def test_tmpdir_permissions(clean_submission, monkeypatch):
-    # tmpdir 位於容器 /workspace，未掛載到 host，無法直接檢查，測試略過
-    pytest.skip("tmpdir is container-local; skip host-side permission check")
+    sub_id = "it-tmpdir"
+    clean_submission.append(sub_id)
+    teacher = r'''
+    #include <stdio.h>
+    int main(){
+        FILE *f = fopen("/tmp/tmpdir_check.txt","w");
+        if(!f) return 1;
+        fputs("ok", f);
+        fclose(f);
+        FILE *c=fopen("Check_Result","w");
+        if(!c) return 1;
+        fprintf(c,"STATUS: AC\nMESSAGE: tmpdir ok\n");
+        fclose(c);
+        return 0;
+    }
+    '''
+    student = r'''
+    #include <stdio.h>
+    int main(){printf("pong\n"); fflush(stdout); return 0;}
+    '''
+    _prepare_submission(sub_id, teacher, student)
+    res = _run(sub_id)
+    assert res["Status"] == "AC"
+    assert res.get("teacherExit", 0) == 0
 
 
 def test_interactive_python_teacher(clean_submission):
