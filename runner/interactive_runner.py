@@ -71,7 +71,8 @@ class InteractiveRunner:
             Path("/workspace/testcase") / Path(self.case_in_path).name)
 
         command = [
-            "/usr/bin/python3",
+            "/usr/bin/env",
+            "python3",
             "/app/runner/interactive_orchestrator.py",
             "--workdir",
             "/workspace",
