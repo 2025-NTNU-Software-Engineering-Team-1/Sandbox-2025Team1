@@ -29,6 +29,29 @@ class Meta(BaseModel):
     scoringScript: bool = False
     scorerAsset: Optional[str] = None
 
+    @validator("executionMode", pre=True)
+    def _coerce_execution_mode(cls, v):
+        if isinstance(v, str):
+            mapping = {
+                "general": ExecutionMode.GENERAL,
+                "functionOnly": ExecutionMode.FUNCTION_ONLY,
+                "interactive": ExecutionMode.INTERACTIVE,
+            }
+            v = mapping.get(v, v)
+        return v
+
+    @validator("buildStrategy", pre=True)
+    def _coerce_build_strategy(cls, v):
+        if isinstance(v, str):
+            mapping = {
+                "compile": BuildStrategy.COMPILE,
+                "makeNormal": BuildStrategy.MAKE_NORMAL,
+                "makeFunctionOnly": BuildStrategy.MAKE_FUNCTION_ONLY,
+                "makeInteractive": BuildStrategy.MAKE_INTERACTIVE,
+            }
+            v = mapping.get(v, v)
+        return v
+
     @validator('tasks')
     def validate_task(cls, v):
         if sum(t.taskScore for t in v) != 100:
