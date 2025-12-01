@@ -48,7 +48,12 @@ jobs:
       
       - name: Build sandbox
         run: ./build.sh
-      
+        
+      - name: Verify interactive image
+        run: |
+          docker images | grep noj-interactive
+          docker run --rm noj-interactive python3 --version
+
       - name: Install dependencies
         run: |
           pip install -r requirements.txt

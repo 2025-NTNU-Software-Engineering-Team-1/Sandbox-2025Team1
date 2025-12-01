@@ -20,30 +20,27 @@ INTERACTIVE_CFG_PATH = Path(".config/interactive.json")
 
 
 def _has_image(name: str) -> bool:
-    """
-    Check image exists and has python3 available (interactive runner needs it).
-    """
+    """Return True if image exists and can run python3."""
     try:
         cli = docker.APIClient(base_url=SUBMISSION_CFG.get(
             "docker_url", "unix://var/run/docker.sock"))
-        images = cli.images(name=name)
+        images = cli.images(name=name) or []
         if not images:
             return False
-        # sanity: ensure python3 is present
-        container = cli.create_container(
-            image=name,
-            command=["python3", "--version"],
-        )
         try:
+            container = cli.create_container(image=name,
+                                             command=["python3", "--version"])
             cli.start(container)
             cli.wait(container)
+        except Exception:
+            return False
         finally:
             try:
                 cli.remove_container(container, force=True)
             except Exception:
                 pass
         return True
-    except Exception:
+    except Exception as exc:
         return False
 
 
