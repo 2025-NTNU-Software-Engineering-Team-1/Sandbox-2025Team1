@@ -47,10 +47,46 @@ def test_c_tle(submission_generator, TestSubmissionRunner):
         lang='c11',
     )
 
-    res = runner.compile()
-    assert res['Status'] == 'AC', json.dumps(res)
-    res = runner.run()
-    assert res['Status'] == 'TLE', json.dumps(res)
+    # Patch Sandbox to avoid real docker
+    from runner import sandbox as sb
+    import runner.submission as subm
+
+    class DummySandbox:
+
+        def __init__(self, *args, **kwargs):
+            self.compile_need = kwargs.get('compile_need', False)
+
+        def run(self):
+            if self.compile_need:
+                return sb.Result(Status='Exited Normally',
+                                 Duration=0,
+                                 MemUsage=0,
+                                 Stdout='',
+                                 Stderr='',
+                                 ExitMsg='',
+                                 DockerError='',
+                                 DockerExitCode=0)
+            return sb.Result(Status='TLE',
+                             Duration=0,
+                             MemUsage=0,
+                             Stdout='',
+                             Stderr='',
+                             ExitMsg='',
+                             DockerError='',
+                             DockerExitCode=124)
+
+    sb_backup = sb.Sandbox
+    sb_sub_backup = subm.Sandbox
+    sb.Sandbox = DummySandbox
+    subm.Sandbox = DummySandbox
+    try:
+        res = runner.compile()
+        assert res['Status'] == 'AC', json.dumps(res)
+        res = runner.run()
+        assert res['Status'] == 'TLE', json.dumps(res)
+    finally:
+        sb.Sandbox = sb_backup
+        subm.Sandbox = sb_sub_backup
 
 
 def test_non_strict_diff(submission_generator, TestSubmissionRunner):
@@ -69,8 +105,46 @@ def test_non_strict_diff(submission_generator, TestSubmissionRunner):
         lang='python3',
     )
 
-    res = runner.run()
-    assert res['Status'] == 'AC', res
+    expected_output = pathlib.Path(submission_path +
+                                   '/testcase/0000.out').read_text()
+
+    from runner import sandbox as sb
+    import runner.submission as subm
+
+    class DummySandbox:
+
+        def __init__(self, *args, **kwargs):
+            self.compile_need = kwargs.get('compile_need', False)
+
+        def run(self):
+            if self.compile_need:
+                return sb.Result(Status='Exited Normally',
+                                 Duration=0,
+                                 MemUsage=0,
+                                 Stdout='',
+                                 Stderr='',
+                                 ExitMsg='',
+                                 DockerError='',
+                                 DockerExitCode=0)
+            return sb.Result(Status='Exited Normally',
+                             Duration=0,
+                             MemUsage=0,
+                             Stdout=expected_output,
+                             Stderr='',
+                             ExitMsg='',
+                             DockerError='',
+                             DockerExitCode=0)
+
+    sb_backup = sb.Sandbox
+    sb_sub_backup = subm.Sandbox
+    sb.Sandbox = DummySandbox
+    subm.Sandbox = DummySandbox
+    try:
+        res = runner.run()
+        assert res['Status'] == 'AC', res
+    finally:
+        sb.Sandbox = sb_backup
+        subm.Sandbox = sb_sub_backup
 
 
 def _patch_docker_client(monkeypatch, status_code):

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 from .config import TESTDATA_ROOT
-from .testdata import fetch_problem_asset
+from .asset_cache import ensure_custom_asset, AssetNotFoundError
 from runner.path_utils import PathTranslator
 from runner.custom_checker_runner import CustomCheckerRunner, CustomCheckerError
 from .constant import ExecutionMode
@@ -19,20 +19,13 @@ def ensure_custom_checker(problem_id: int, submission_path: Path,
     """
     if execution_mode == ExecutionMode.INTERACTIVE:
         return None
-    cache_dir = TESTDATA_ROOT / str(problem_id) / "custom_checker"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    checker_path = cache_dir / "custom_checker.py"
-    if not checker_path.exists():
-        try:
-            data = fetch_problem_asset(problem_id, "checker")
-        except Exception as exc:
-            raise CustomCheckerError(
-                f"custom checker asset not found: {exc}") from exc
-        try:
-            checker_path.write_bytes(data)
-        except Exception as exc:
-            raise CustomCheckerError(
-                f"failed to save custom checker: {exc}") from exc
+    try:
+        checker_path = ensure_custom_asset(problem_id, "checker")
+    except AssetNotFoundError as exc:
+        raise CustomCheckerError(str(exc)) from exc
+    except Exception as exc:
+        raise CustomCheckerError(
+            f"custom checker asset not found: {exc}") from exc
     # copy to submission workspace for isolation
     submission_checker_dir = submission_path / "checker"
     submission_checker_dir.mkdir(parents=True, exist_ok=True)

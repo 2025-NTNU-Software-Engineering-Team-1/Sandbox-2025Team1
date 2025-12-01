@@ -9,7 +9,7 @@ from typing import Callable, Iterable, Optional
 
 from .constant import Language, SubmissionMode
 from .meta import Meta
-from .testdata import fetch_problem_asset
+from .asset_cache import ensure_custom_asset, AssetNotFoundError
 from runner.submission import SubmissionRunner
 
 
@@ -115,9 +115,17 @@ def prepare_function_only_submission(
     make_asset = meta.assetPaths.get("makefile")
     if not make_asset:
         raise BuildStrategyError("functionOnly mode requires makefile asset")
-    archive = fetch_problem_asset(problem_id, "makefile")
+    makefile_asset = Path(make_asset).name if make_asset else "makefile.zip"
+    try:
+        archive_path = ensure_custom_asset(problem_id,
+                                           "makefile",
+                                           filename=makefile_asset)
+    except AssetNotFoundError as exc:
+        raise BuildStrategyError(str(exc)) from exc
+    except Exception as exc:
+        raise BuildStrategyError(f"failed to fetch makefile: {exc}") from exc
     _reset_directory(src_dir)
-    with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+    with zipfile.ZipFile(archive_path) as zf:
         zf.extractall(src_dir)
     template_name = ("function.h" if meta.language
                      in (Language.C, Language.CPP) else "student_impl.py")
@@ -248,7 +256,18 @@ def _prepare_teacher_artifacts(meta: Meta,
     if teacher_dir.exists():
         shutil.rmtree(teacher_dir)
     teacher_dir.mkdir(parents=True, exist_ok=True)
-    data = fetch_problem_asset(problem_id, "teacher_file")
+    teacher_filename = Path(teacher_path).name
+    try:
+        teacher_asset_path = ensure_custom_asset(
+            problem_id=problem_id,
+            asset_type="teacher_file",
+            filename=teacher_filename,
+        )
+    except AssetNotFoundError as exc:
+        raise BuildStrategyError(str(exc)) from exc
+    except Exception as exc:
+        raise BuildStrategyError(
+            f"failed to fetch teacher file: {exc}") from exc
     ext = {
         Language.C: ".c",
         Language.CPP: ".cpp",
@@ -257,7 +276,7 @@ def _prepare_teacher_artifacts(meta: Meta,
     if ext is None:
         raise BuildStrategyError("unsupported teacher language")
     src_path = teacher_dir / f"main{ext}"
-    src_path.write_bytes(data)
+    src_path.write_bytes(teacher_asset_path.read_bytes())
     # Compile if needed
     if teacher_lang == Language.PY:
         if not src_path.exists():

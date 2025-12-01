@@ -153,8 +153,10 @@ def test_prepare_function_only_submission(monkeypatch, tmp_path):
         zf.writestr('Makefile', 'all:\n\t@touch a.out\n')
         zf.writestr('function.h', '// template')
     bundle_bytes = bundle.getvalue()
-    monkeypatch.setattr("dispatcher.build_strategy.fetch_problem_asset",
-                        lambda problem_id, asset_type: bundle_bytes)
+    temp_path = tmp_path / "makefile.zip"
+    temp_path.write_bytes(bundle_bytes)
+    monkeypatch.setattr("dispatcher.build_strategy.ensure_custom_asset",
+                        lambda pid, asset_type, filename=None: temp_path)
 
     plan = prepare_function_only_submission(
         problem_id=1,
@@ -183,8 +185,10 @@ def test_prepare_function_only_python(monkeypatch, tmp_path):
         zf.writestr('student_impl.py', '# existing')
         zf.writestr('main.py', 'print("teacher")')
     bundle_bytes = bundle.getvalue()
-    monkeypatch.setattr("dispatcher.build_strategy.fetch_problem_asset",
-                        lambda problem_id, asset_type: bundle_bytes)
+    temp_path = tmp_path / "makefile.zip"
+    temp_path.write_bytes(bundle_bytes)
+    monkeypatch.setattr("dispatcher.build_strategy.ensure_custom_asset",
+                        lambda pid, asset_type, filename=None: temp_path)
 
     plan = prepare_function_only_submission(
         problem_id=1,
@@ -440,3 +444,55 @@ def test_run_custom_scorer_payload(monkeypatch):
     assert scoring_payload["breakdown"] == {"partial": [77]}
     assert scoring_payload["message"] == "ok"
     assert status_override is None
+
+
+def test_interactive_compile_error_short_circuits(monkeypatch):
+    dispatcher = Dispatcher()
+    dispatcher.testing = True
+    submission_id = "it-compile-ce"
+    meta = Meta(
+        language=Language.C,
+        tasks=[
+            Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)
+        ],
+        submissionMode=SubmissionMode.CODE,
+        executionMode=ExecutionMode.INTERACTIVE,
+        buildStrategy=BuildStrategy.MAKE_INTERACTIVE,
+        assetPaths={"teacherLang": "c"},
+    )
+    dispatcher.result[submission_id] = (meta, {"0000": None})
+    dispatcher.locks[submission_id] = threading.Lock()
+    dispatcher.compile_results[submission_id] = {
+        "Status": "CE",
+        "Stderr": "compile failed",
+    }
+    dispatcher.custom_checker_info[submission_id] = {}
+    calls = []
+
+    class DummyRunner:
+
+        def __init__(self, *args, **kwargs):
+            calls.append("init")
+
+        def run(self):
+            calls.append("run")
+            return {"Status": "AC"}
+
+    monkeypatch.setattr("dispatcher.dispatcher.InteractiveRunner", DummyRunner)
+
+    dispatcher.create_container(
+        submission_id=submission_id,
+        case_no="0000",
+        mem_limit=1024,
+        time_limit=1000,
+        case_in_path="/tmp/in",
+        case_out_path="/tmp/out",
+        lang=Language.C,
+        execution_mode=ExecutionMode.INTERACTIVE,
+        teacher_first=False,
+    )
+
+    assert calls == []
+    _, results = dispatcher.result[submission_id]
+    assert results["0000"]["status"] == "CE"
+    assert "compile failed" in (results["0000"]["stderr"] or "")

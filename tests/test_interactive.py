@@ -472,10 +472,12 @@ def test_teacher_compile_fail_build_strategy(tmp_path):
 def test_prepare_teacher_file_respects_teacher_lang(tmp_path, monkeypatch):
     import dispatcher.build_strategy as bs
 
-    def fake_fetch(pid, asset):
-        return b'print("ok")'
+    def fake_fetch(pid=None, asset_type=None, filename=None, **kwargs):
+        path = tmp_path / "Teacher_file.py"
+        path.write_text('print("ok")')
+        return path
 
-    monkeypatch.setattr(bs, "fetch_problem_asset", fake_fetch)
+    monkeypatch.setattr(bs, "ensure_custom_asset", fake_fetch)
     meta = Meta(
         language=Language.C,
         tasks=[Task(taskScore=100, memoryLimit=1, timeLimit=1, caseCount=1)],
@@ -495,10 +497,12 @@ def test_prepare_teacher_file_respects_teacher_lang(tmp_path, monkeypatch):
 def test_prepare_teacher_file_missing_teacher_lang(tmp_path, monkeypatch):
     import dispatcher.build_strategy as bs
 
-    def fake_fetch(pid, asset):
-        return b'int main(){return 0;}'
+    def fake_fetch(pid=None, asset_type=None, filename=None, **kwargs):
+        path = tmp_path / "Teacher_file.c"
+        path.write_text('int main(){return 0;}')
+        return path
 
-    monkeypatch.setattr(bs, "fetch_problem_asset", fake_fetch)
+    monkeypatch.setattr(bs, "ensure_custom_asset", fake_fetch)
     meta = Meta(
         language=Language.C,
         tasks=[Task(taskScore=100, memoryLimit=1, timeLimit=1, caseCount=1)],

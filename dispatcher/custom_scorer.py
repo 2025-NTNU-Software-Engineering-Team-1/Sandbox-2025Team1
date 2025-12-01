@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 from .config import TESTDATA_ROOT
-from .testdata import fetch_problem_asset
+from .asset_cache import ensure_custom_asset, AssetNotFoundError
 from runner.path_utils import PathTranslator
 from runner.custom_scorer_runner import CustomScorerRunner, CustomScorerError
 
@@ -15,20 +15,13 @@ class CustomScorerSetupError(Exception):
 
 def ensure_custom_scorer(problem_id: int, submission_path: Path) -> Path:
     """Download/cache custom scorer and copy into submission folder."""
-    cache_dir = TESTDATA_ROOT / str(problem_id) / "custom_scorer"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    scorer_path = cache_dir / "score.py"
-    if not scorer_path.exists():
-        try:
-            data = fetch_problem_asset(problem_id, "scoring_script")
-        except Exception as exc:
-            raise CustomScorerSetupError(
-                f"custom scorer asset not found: {exc}") from exc
-        try:
-            scorer_path.write_bytes(data)
-        except Exception as exc:
-            raise CustomScorerSetupError(
-                f"failed to save custom scorer: {exc}") from exc
+    try:
+        scorer_path = ensure_custom_asset(problem_id, "scoring_script")
+    except AssetNotFoundError as exc:
+        raise CustomScorerSetupError(str(exc)) from exc
+    except Exception as exc:
+        raise CustomScorerSetupError(
+            f"custom scorer asset not found: {exc}") from exc
     submission_scorer_dir = submission_path / "scorer"
     submission_scorer_dir.mkdir(parents=True, exist_ok=True)
     target = submission_scorer_dir / "score.py"

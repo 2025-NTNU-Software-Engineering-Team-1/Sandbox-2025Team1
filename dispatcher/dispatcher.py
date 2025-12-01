@@ -803,20 +803,24 @@ class Dispatcher(threading.Thread):
                     message="teacherLang missing/invalid",
                 )
                 return
-            runner = InteractiveRunner(
-                submission_id=submission_id,
-                time_limit=time_limit,
-                mem_limit=mem_limit,
-                case_in_path=case_in_path,
-                teacher_first=teacher_first,
-                lang_key=lang_key,
-                teacher_lang_key=teacher_lang_key,
-            )
-            try:
-                self.inc_container()
-                res = runner.run()
-            finally:
-                self.dec_container()
+            compile_res = self.extract_compile_result(submission_id, lang)
+            if self.compile_need(lang) and compile_res.get("Status") == "CE":
+                res = compile_res
+            else:
+                runner = InteractiveRunner(
+                    submission_id=submission_id,
+                    time_limit=time_limit,
+                    mem_limit=mem_limit,
+                    case_in_path=case_in_path,
+                    teacher_first=teacher_first,
+                    lang_key=lang_key,
+                    teacher_lang_key=teacher_lang_key,
+                )
+                try:
+                    self.inc_container()
+                    res = runner.run()
+                finally:
+                    self.dec_container()
         else:
             runner = SubmissionRunner(
                 submission_id,
