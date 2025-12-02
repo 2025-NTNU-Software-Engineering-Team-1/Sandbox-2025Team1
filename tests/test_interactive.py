@@ -44,8 +44,10 @@ def _has_image(name: str) -> bool:
         return False
 
 
-pytestmark = pytest.mark.skipif(not _has_image(INTERACTIVE_IMAGE),
-                                reason="interactive image not available")
+pytestmark = pytest.mark.skipif(
+    not _has_image(INTERACTIVE_IMAGE),
+    reason="interactive image missing or python3 unavailable",
+)
 
 
 def _compile_c(src: Path, output: Path):

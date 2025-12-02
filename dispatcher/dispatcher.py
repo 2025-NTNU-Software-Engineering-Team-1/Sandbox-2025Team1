@@ -24,6 +24,7 @@ from .build_strategy import (
 )
 from .utils import logger
 from .pipeline import fetch_problem_rules
+from .artifact_collector import ArtifactCollector
 
 from .static_analysis import run_static_analysis, build_sa_ce_task_content
 from .custom_checker import ensure_custom_checker, run_custom_checker_case
@@ -81,6 +82,11 @@ class Dispatcher(threading.Thread):
         self.build_plans = {}
         self.build_locks = {}
         self.sa_payloads = {}
+        self.artifact_collector = ArtifactCollector(
+            backend_url=config.BACKEND_API,
+            token=config.SANDBOX_TOKEN,
+            logger=logger(),
+        )
 
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}
@@ -606,6 +612,7 @@ class Dispatcher(threading.Thread):
         self.custom_checker_info.pop(submission_id, None)
         self.custom_scorer_info.pop(submission_id, None)
         self.checker_payloads.pop(submission_id, None)
+        self.artifact_collector.cleanup(submission_id)
 
     def run(self):
         self.do_run = True
@@ -722,6 +729,22 @@ class Dispatcher(threading.Thread):
             ).compile()
             self.compile_results[submission_id] = res
             logger().debug(f'finish compiling, get status {res["Status"]}')
+            meta_obj, _ = self.result.get(submission_id, (None, None))
+            if (res.get("Status") == "AC" and meta_obj
+                    and ArtifactCollector.should_collect_binary(meta_obj)):
+                try:
+                    self.artifact_collector.collect_binary(
+                        submission_id=submission_id,
+                        src_dir=self.SUBMISSION_DIR / submission_id / "src",
+                    )
+                    self.artifact_collector.upload_binary_only(
+                        submission_id=submission_id)
+                except Exception as exc:
+                    logger().warning(
+                        "collect/upload binary after compile failed [id=%s]: %s",
+                        submission_id,
+                        exc,
+                    )
 
     def build(
         self,
@@ -773,6 +796,22 @@ class Dispatcher(threading.Thread):
             self.prebuilt_submissions.add(submission_id)
             self.build_plans.pop(submission_id, None)
             self.build_locks.pop(submission_id, None)
+            meta_obj, _ = self.result.get(submission_id, (None, None))
+            if (meta_obj
+                    and ArtifactCollector.should_collect_binary(meta_obj)):
+                try:
+                    self.artifact_collector.collect_binary(
+                        submission_id=submission_id,
+                        src_dir=self.SUBMISSION_DIR / submission_id / "src",
+                    )
+                    self.artifact_collector.upload_binary_only(
+                        submission_id=submission_id)
+                except Exception as exc:
+                    logger().warning(
+                        "collect/upload binary after build failed [id=%s]: %s",
+                        submission_id,
+                        exc,
+                    )
 
     def create_container(
         self,
@@ -787,6 +826,25 @@ class Dispatcher(threading.Thread):
         teacher_first: bool = False,
     ):
         lang_key = ["c11", "cpp17", "python3"][int(lang)]
+        meta_obj, _ = self.result.get(submission_id, (None, None))
+        collect_artifacts = meta_obj and ArtifactCollector.should_collect_artifacts(
+            meta_obj)
+        workdir = self.SUBMISSION_DIR / submission_id / "src"
+        if collect_artifacts:
+            try:
+                self.artifact_collector.snapshot_before_case(
+                    submission_id=submission_id,
+                    task_no=int(case_no[:2]),
+                    case_no=int(case_no[2:]),
+                    workdir=workdir,
+                )
+            except Exception as exc:
+                logger().warning(
+                    "snapshot before case failed [id=%s case=%s]: %s",
+                    submission_id,
+                    case_no,
+                    exc,
+                )
         use_custom_checker = self._use_custom_checker(submission_id)
         checker_info = self.custom_checker_info.get(submission_id, {})
         if ExecutionMode(execution_mode) == ExecutionMode.INTERACTIVE:
@@ -888,6 +946,23 @@ class Dispatcher(threading.Thread):
                         status=checker_result["status"],
                         message=message,
                     )
+        if collect_artifacts:
+            try:
+                self.artifact_collector.record_case_artifact(
+                    submission_id=submission_id,
+                    task_no=int(case_no[:2]),
+                    case_no=int(case_no[2:]),
+                    workdir=workdir,
+                    stdout=res.get("Stdout", ""),
+                    stderr=res.get("Stderr", ""),
+                )
+            except Exception as exc:
+                logger().warning(
+                    "collect artifact failed [id=%s case=%s]: %s",
+                    submission_id,
+                    case_no,
+                    exc,
+                )
         logger().info(f"finish task {submission_id}/{case_no}")
         # truncate long stdout/stderr
         _res = res.copy()
@@ -1000,19 +1075,52 @@ class Dispatcher(threading.Thread):
             submission_data["scoring"] = scoring_payload
         if status_override:
             submission_data["statusOverride"] = status_override
-        self.release(submission_id)
         logger().info(f"send to BE [submission_id={submission_id}]")
-        resp = requests.put(
-            f"{config.BACKEND_API}/submission/{submission_id}/complete",
-            json=submission_data,
-        )
-        logger().debug(f"get BE response: [{resp.status_code}] {resp.text}", )
-        # clear
-        if resp.ok:
-            file_manager.clean_data(submission_id)
-        # copy to another place
-        else:
+        resp = None
+        try:
+            resp = requests.put(
+                f"{config.BACKEND_API}/submission/{submission_id}/complete",
+                json=submission_data,
+            )
+            logger().debug(
+                f"get BE response: [{resp.status_code}] {resp.text}", )
+            # clear
+            if resp.ok:
+                # collect binary lazily
+                try:
+                    if self.artifact_collector.should_collect_binary(meta):
+                        self.artifact_collector.collect_binary(
+                            submission_id=submission_id,
+                            src_dir=self.SUBMISSION_DIR / submission_id /
+                            "src",
+                        )
+                except Exception as exc:
+                    logger().warning(
+                        "collect binary failed [id=%s]: %s",
+                        submission_id,
+                        exc,
+                    )
+                try:
+                    self.artifact_collector.upload_all(submission_id)
+                except Exception as exc:
+                    logger().warning(
+                        "upload artifacts failed [id=%s]: %s",
+                        submission_id,
+                        exc,
+                    )
+                file_manager.clean_data(submission_id)
+            # copy to another place
+            else:
+                file_manager.backup_data(submission_id)
+        except Exception as exc:
+            logger().warning(
+                "send to BE failed [submission_id=%s]: %s",
+                submission_id,
+                exc,
+            )
             file_manager.backup_data(submission_id)
+        finally:
+            self.release(submission_id)
 
     def get_static_analysis_rules(self, problem_id: int):
         logger().debug(

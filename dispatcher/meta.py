@@ -28,6 +28,7 @@ class Meta(BaseModel):
     checkerAsset: Optional[str] = None
     scoringScript: bool = False
     scorerAsset: Optional[str] = None
+    artifactCollection: list[str] = Field(default_factory=list)
 
     @validator("executionMode", pre=True)
     def _coerce_execution_mode(cls, v):

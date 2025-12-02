@@ -106,6 +106,7 @@ def get_problem_meta(problem_id: int, language: Language) -> Meta:
     obj["scoringScript"] = bool(scoring_script)
     if scorer_asset and not obj.get("scorerAsset"):
         obj["scorerAsset"] = scorer_asset
+    obj.setdefault("artifactCollection", [])
     return Meta.parse_obj(obj)
 
 
