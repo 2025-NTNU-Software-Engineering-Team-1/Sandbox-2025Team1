@@ -4,9 +4,9 @@ from datetime import datetime
 from zipfile import ZipFile
 from pathlib import Path
 from . import config
-from .meta import Meta
 from .utils import logger
 from .constant import ExecutionMode, Language, SubmissionMode
+from .meta import Meta
 
 
 def extract(
@@ -45,6 +45,25 @@ def extract(
         for chaos_file in chaos_dir.iterdir():
             shutil.move(str(chaos_file), str(code_dir))
         os.rmdir(chaos_dir)
+
+    # expose testcase .in files into src if enabled
+    if getattr(meta, "exposeTestcase", False):
+        _copy_testcase_inputs(testcase_dir, code_dir)
+
+
+def _copy_testcase_inputs(testcase_dir: Path, code_dir: Path):
+    if not testcase_dir.exists():
+        return
+    for root, _, files in os.walk(testcase_dir):
+        for fname in files:
+            if not fname.endswith(".in"):
+                continue
+            src = Path(root) / fname
+            dest = code_dir / fname
+            try:
+                shutil.copy(src, dest)
+            except Exception:
+                continue
 
 
 def _extract_code_source(code_dir: Path, source, language_id: int):
