@@ -14,6 +14,7 @@ ASSET_FILENAME_MAP = {
     "checker": "custom_checker.py",
     "scoring_script": "score.py",
     "makefile": "makefile.zip",
+    "resource_data": "resource_data.zip",
 }
 
 
@@ -25,8 +26,7 @@ def get_asset_checksum(problem_id: int, asset_type: str) -> Optional[str]:
     """
     Fetch asset checksum from Backend.
 
-    Backend Request.args 會將下底線轉 camelCase（asset_type -> assetType），
-    因此統一以 camelCase 呼叫，避免歧義。
+    Backend expects query param `asset_type`.
     """
 
     url = f"{BACKEND_API}/problem/{problem_id}/asset-checksum"
@@ -34,6 +34,7 @@ def get_asset_checksum(problem_id: int, asset_type: str) -> Optional[str]:
         url,
         params={
             "token": SANDBOX_TOKEN,
+            # Backend Request.args camel-cases keys; use assetType to avoid type error
             "assetType": asset_type,
         },
     )

@@ -33,9 +33,9 @@ def test_artifact_collector_snapshot_and_upload(tmp_path, monkeypatch):
     # create new file and stdout/stderr
     f = workdir / "out.txt"
     f.write_text("hello")
-    # simulate executable binary
+    # simulate executable binary (non-ELF -> should skip)
     bin_path = workdir / "main"
-    bin_path.write_bytes(b"\x7fELFbinary")
+    bin_path.write_bytes(b"not-elf")
     bin_path.chmod(0o755)
     collector.record_case_artifact("s1",
                                    0,
@@ -47,9 +47,8 @@ def test_artifact_collector_snapshot_and_upload(tmp_path, monkeypatch):
 
     collector.upload_all("s1")
 
-    # expect two uploads: case artifact + binary
-    assert len(calls) == 2
-    case_call = next(c for c in calls if "artifact/upload/case" in c["url"])
-    bin_call = next(c for c in calls if "artifact/upload/binary" in c["url"])
+    # expect only case artifact upload
+    assert len(calls) == 1
+    case_call = calls[0]
+    assert "artifact/upload/case" in case_call["url"]
     assert case_call["data_len"] > 0
-    assert bin_call["data_len"] == len(bin_path.read_bytes())

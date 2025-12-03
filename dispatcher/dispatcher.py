@@ -29,6 +29,7 @@ from .artifact_collector import ArtifactCollector
 from .static_analysis import run_static_analysis, build_sa_ce_task_content
 from .custom_checker import ensure_custom_checker, run_custom_checker_case
 from .custom_scorer import ensure_custom_scorer, run_custom_scorer
+from .resource_data import prepare_resource_data, copy_resource_for_case
 
 
 class Dispatcher(threading.Thread):
@@ -87,6 +88,7 @@ class Dispatcher(threading.Thread):
             token=config.SANDBOX_TOKEN,
             logger=logger(),
         )
+        self.resource_dirs = {}
 
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}
@@ -529,6 +531,38 @@ class Dispatcher(threading.Thread):
             meta=submission_config,
             submission_path=submission_path,
         )
+        # prepare resource data if enabled
+        try:
+            if getattr(submission_config, "resourceData", False):
+                res_dir = prepare_resource_data(
+                    problem_id=problem_id,
+                    submission_path=submission_path,
+                    asset_paths=getattr(submission_config, "assetPaths", {}),
+                )
+                if res_dir:
+                    self.resource_dirs[submission_id] = res_dir
+        except Exception as exc:
+            err_msg = f"resource data preparation failed: {exc}"
+            logger().warning(
+                "resource data preparation failed [id=%s]: %s",
+                submission_id,
+                exc,
+            )
+            task_content = {}
+            for ti, task in enumerate(submission_config.tasks):
+                for ci in range(task.caseCount):
+                    case_no = f"{ti:02d}{ci:02d}"
+                    task_content[case_no] = {
+                        "stdout": "",
+                        "stderr": err_msg,
+                        "exitCode": 1,
+                        "execTime": -1,
+                        "memoryUsage": -1,
+                        "status": "JE",
+                    }
+            self.result[submission_id] = (submission_config, task_content)
+            self.on_submission_complete(submission_id)
+            return
 
         # assign submission context
         task_content = {}
@@ -613,6 +647,7 @@ class Dispatcher(threading.Thread):
         self.custom_scorer_info.pop(submission_id, None)
         self.checker_payloads.pop(submission_id, None)
         self.artifact_collector.cleanup(submission_id)
+        self.resource_dirs.pop(submission_id, None)
 
     def run(self):
         self.do_run = True
@@ -845,6 +880,60 @@ class Dispatcher(threading.Thread):
                     case_no,
                     exc,
                 )
+        # copy resource files for this case (after snapshot to avoid diff)
+        res_dir = self.resource_dirs.get(submission_id)
+        copied_resources = None
+        copy_error = None
+        if res_dir:
+            try:
+                copied_resources = copy_resource_for_case(
+                    resource_dir=res_dir,
+                    src_dir=workdir,
+                    task_no=int(case_no[:2]),
+                    case_no=int(case_no[2:]),
+                )
+            except Exception as exc:
+                copy_error = exc
+                logger().warning(
+                    "resource copy failed [id=%s case=%s]: %s",
+                    submission_id,
+                    case_no,
+                    exc,
+                )
+        if copy_error:
+            res = {
+                "Status": "JE",
+                "Stdout": "",
+                "Stderr": f"resource copy failed: {copy_error}",
+                "Duration": -1,
+                "MemUsage": -1,
+                "DockerExitCode": 1,
+            }
+            lock = self.locks.get(submission_id)
+            if lock:
+                with lock:
+                    self.on_case_complete(
+                        submission_id=submission_id,
+                        case_no=case_no,
+                        stdout=res["Stdout"],
+                        stderr=res["Stderr"],
+                        exit_code=res["DockerExitCode"],
+                        exec_time=res["Duration"],
+                        mem_usage=res["MemUsage"],
+                        prob_status=res["Status"],
+                    )
+            else:
+                self.on_case_complete(
+                    submission_id=submission_id,
+                    case_no=case_no,
+                    stdout=res["Stdout"],
+                    stderr=res["Stderr"],
+                    exit_code=res["DockerExitCode"],
+                    exec_time=res["Duration"],
+                    mem_usage=res["MemUsage"],
+                    prob_status=res["Status"],
+                )
+            return
         use_custom_checker = self._use_custom_checker(submission_id)
         checker_info = self.custom_checker_info.get(submission_id, {})
         if ExecutionMode(execution_mode) == ExecutionMode.INTERACTIVE:
@@ -879,6 +968,12 @@ class Dispatcher(threading.Thread):
                     res = runner.run()
                 finally:
                     self.dec_container()
+                if copied_resources:
+                    try:
+                        from dispatcher.resource_data import cleanup_resource_files
+                        cleanup_resource_files(workdir, copied_resources)
+                    except Exception:
+                        pass
         else:
             runner = SubmissionRunner(
                 submission_id,
@@ -896,6 +991,19 @@ class Dispatcher(threading.Thread):
                     res = runner.run(skip_diff=use_custom_checker)
                 finally:
                     self.dec_container()
+                if copied_resources:
+                    try:
+                        from dispatcher.resource_data import cleanup_resource_files
+                        cleanup_resource_files(workdir, copied_resources)
+                    except Exception:
+                        pass
+            else:
+                if copied_resources:
+                    try:
+                        from dispatcher.resource_data import cleanup_resource_files
+                        cleanup_resource_files(workdir, copied_resources)
+                    except Exception:
+                        pass
             if use_custom_checker and checker_info.get("error"):
                 res = {
                     "Status": "JE",

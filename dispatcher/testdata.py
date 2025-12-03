@@ -60,6 +60,7 @@ def fetch_problem_asset(problem_id: int, asset_type: str) -> bytes:
         f"{BACKEND_API}/problem/{problem_id}/asset/{asset_type}",
         params={
             "token": SANDBOX_TOKEN,
+            "assetType": asset_type,
         },
     )
     handle_problem_response(resp)
@@ -107,7 +108,7 @@ def get_problem_meta(problem_id: int, language: Language) -> Meta:
     if scorer_asset and not obj.get("scorerAsset"):
         obj["scorerAsset"] = scorer_asset
     obj.setdefault("artifactCollection", [])
-    obj.setdefault("exposeTestcase", False)
+    obj.setdefault("resourceData", False)
     return Meta.parse_obj(obj)
 
 

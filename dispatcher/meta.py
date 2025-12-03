@@ -29,7 +29,7 @@ class Meta(BaseModel):
     scoringScript: bool = False
     scorerAsset: Optional[str] = None
     artifactCollection: list[str] = Field(default_factory=list)
-    exposeTestcase: bool = False
+    resourceData: bool = False
 
     @validator("executionMode", pre=True)
     def _coerce_execution_mode(cls, v):
