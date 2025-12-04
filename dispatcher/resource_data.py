@@ -10,37 +10,69 @@ class ResourceDataError(Exception):
     pass
 
 
-def prepare_resource_data(problem_id: int, submission_path: Path,
-                          asset_paths: dict | None) -> Path | None:
-    """Download and extract resource_data asset into submission_path/resource_data."""
+def _prepare_resource_bundle(
+    problem_id: int,
+    asset_paths: dict | None,
+    asset_key: str,
+    submission_path: Path,
+    target_dir: Path,
+    clean: bool = True,
+) -> Path | None:
     if not asset_paths:
         return None
-    res_path = asset_paths.get("resource_data")
+    res_path = asset_paths.get(asset_key)
     if not res_path:
         return None
     try:
         filename = Path(res_path).name
         asset_file = ensure_custom_asset(problem_id,
-                                         "resource_data",
+                                         asset_key,
                                          filename=filename)
     except AssetNotFoundError:
-        logger().warning("resource_data asset not found [problem_id=%s]",
+        logger().warning("%s asset not found [problem_id=%s]", asset_key,
                          problem_id)
         return None
     except Exception as exc:
-        raise ResourceDataError(
-            f"failed to fetch resource data: {exc}") from exc
+        raise ResourceDataError(f"failed to fetch {asset_key}: {exc}") from exc
 
-    target_dir = submission_path / "resource_data"
-    if target_dir.exists():
+    if target_dir.exists() and clean:
         shutil.rmtree(target_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
     try:
         with zipfile.ZipFile(asset_file) as zf:
             zf.extractall(target_dir)
     except Exception as exc:
-        raise ResourceDataError(f"invalid resource data zip: {exc}") from exc
+        raise ResourceDataError(f"invalid {asset_key} zip: {exc}") from exc
     return target_dir
+
+
+def prepare_resource_data(problem_id: int, submission_path: Path,
+                          asset_paths: dict | None) -> Path | None:
+    """Student resource data extracted into submission_path/resource_data."""
+    return _prepare_resource_bundle(
+        problem_id=problem_id,
+        asset_paths=asset_paths,
+        asset_key="resource_data",
+        submission_path=submission_path,
+        target_dir=submission_path / "resource_data",
+    )
+
+
+def prepare_teacher_resource_data(problem_id: int, submission_path: Path,
+                                  asset_paths: dict | None) -> Path | None:
+    """
+    Teacher resource data extracted into submission_path/teacher.
+    Do not delete existing teacher artifacts (interactive teacher code).
+    """
+    target_dir = submission_path / "teacher"
+    return _prepare_resource_bundle(
+        problem_id=problem_id,
+        asset_paths=asset_paths,
+        asset_key="resource_data_teacher",
+        submission_path=submission_path,
+        target_dir=target_dir,
+        clean=False,
+    )
 
 
 def copy_resource_for_case(resource_dir: Path, src_dir: Path, task_no: int,

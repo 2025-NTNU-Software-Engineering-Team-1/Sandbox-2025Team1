@@ -10,13 +10,14 @@ import pytest
 from dispatcher.build_strategy import BuildStrategyError, _prepare_teacher_artifacts
 from dispatcher.constant import Language
 from dispatcher.meta import Meta, Task, SubmissionMode, ExecutionMode, BuildStrategy
-from runner.interactive_runner import InteractiveRunner
-from runner.interactive_orchestrator import _parse_check_result
 
-SUBMISSION_CFG = json.loads(Path(".config/submission.json").read_text())
+_BASE = Path(__file__).resolve().parents[1]
+os.environ["SUBMISSION_CONFIG"] = str(_BASE / ".config" / "submission.json")
+SUBMISSION_CFG = json.loads((_BASE / ".config/submission.json").read_text())
 WORKDIR = Path(SUBMISSION_CFG["working_dir"]).resolve()
 INTERACTIVE_IMAGE = SUBMISSION_CFG.get("interactive_image", "noj-interactive")
-INTERACTIVE_CFG_PATH = Path(".config/interactive.json")
+from runner.interactive_runner import InteractiveRunner
+from runner.interactive_orchestrator import _parse_check_result
 
 
 def _has_image(name: str) -> bool:
@@ -90,7 +91,8 @@ def _prepare_submission(sub_id: str,
 
         shutil.rmtree(root, onerror=_onerror)
     (root / "teacher").mkdir(parents=True)
-    (root / "src").mkdir()
+    (root / "src" / "common").mkdir(parents=True)
+    (root / "src" / "cases").mkdir(parents=True)
     (root / "testcase").mkdir()
     (root / "testcase" / "0000.in").write_text("")
 
@@ -109,13 +111,16 @@ def _prepare_submission(sub_id: str,
         t_main.chmod(0o755)
 
     if student_lang == "python3":
-        s_src = root / "src" / "main.py"
+        s_src = root / "src" / "common" / "main.py"
         s_src.write_text(student_code)
     else:
-        s_src = root / "src" / "main.c"
+        s_src = root / "src" / "common" / "main.c"
         s_src.write_text(student_code)
-        s_bin = root / "src" / "main"
+        s_bin = root / "src" / "common" / "main"
         _compile_c(s_src, s_bin)
+    # prime default case dir
+    case_dir = root / "src" / "cases" / "0000"
+    shutil.copytree(root / "src" / "common", case_dir, dirs_exist_ok=True)
     return root
 
 
@@ -124,8 +129,15 @@ def _run(sub_id: str,
          pipe_mode: str = "devfd",
          teacher_lang: str = "c11",
          student_lang: str = "c11",
-         case_name: str = "0000.in"):
+         case_name: str = "0000.in",
+         allow_write_student: bool = False):
     case_path = WORKDIR / sub_id / "testcase" / case_name
+    case_no = Path(case_name).stem
+    case_dir = WORKDIR / sub_id / "src" / "cases" / case_no
+    if not case_dir.exists():
+        common_dir = WORKDIR / sub_id / "src" / "common"
+        case_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(common_dir, case_dir, dirs_exist_ok=True)
     runner = InteractiveRunner(
         submission_id=sub_id,
         time_limit=2000,
@@ -135,6 +147,8 @@ def _run(sub_id: str,
         lang_key=student_lang,
         teacher_lang_key=teacher_lang,
         pipe_mode=pipe_mode,
+        case_dir=case_dir,
+        student_allow_write=allow_write_student,
     )
     return runner.run()
 
@@ -156,13 +170,6 @@ def clean_submission():
                            stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE)
             shutil.rmtree(path, ignore_errors=True)
-
-
-@pytest.fixture
-def interactive_config_guard():
-    original = json.loads(INTERACTIVE_CFG_PATH.read_text())
-    yield
-    INTERACTIVE_CFG_PATH.write_text(json.dumps(original))
 
 
 def test_interactive_ac(clean_submission):
@@ -254,11 +261,7 @@ def test_interactive_devfd(clean_submission):
     assert res["pipeMode"] == "devfd"
 
 
-def test_fifo_forced_devfd_when_student_write_disabled(
-        clean_submission, interactive_config_guard):
-    cfg = json.loads(INTERACTIVE_CFG_PATH.read_text())
-    cfg["studentAllowWrite"] = False
-    INTERACTIVE_CFG_PATH.write_text(json.dumps(cfg))
+def test_fifo_forced_devfd_when_student_write_disabled(clean_submission):
     sub_id = "it-fifo-fallback"
     clean_submission.append(sub_id)
     teacher = r'''
@@ -271,16 +274,12 @@ def test_fifo_forced_devfd_when_student_write_disabled(
     int main(){char buf[16]; if(fgets(buf,sizeof(buf),stdin)) {printf("pong\n"); fflush(stdout);} return 0;}
     '''
     _prepare_submission(sub_id, teacher, student)
-    res = _run(sub_id, pipe_mode="fifo")
+    res = _run(sub_id, pipe_mode="fifo", allow_write_student=False)
     assert res["Status"] == "AC"
     assert res["pipeMode"] == "devfd"  # auto fallback
 
 
-def test_fifo_allowed_when_student_write_enabled(clean_submission,
-                                                 interactive_config_guard):
-    cfg = json.loads(INTERACTIVE_CFG_PATH.read_text())
-    cfg["studentAllowWrite"] = True
-    INTERACTIVE_CFG_PATH.write_text(json.dumps(cfg))
+def test_fifo_allowed_when_student_write_enabled(clean_submission):
     sub_id = "it-fifo-allowed"
     clean_submission.append(sub_id)
     teacher = r'''
@@ -293,7 +292,7 @@ def test_fifo_allowed_when_student_write_enabled(clean_submission,
     int main(){char buf[32]; if(fgets(buf,sizeof(buf),stdin)) {printf("pong\n"); fflush(stdout);} return 0;}
     '''
     _prepare_submission(sub_id, teacher, student)
-    res = _run(sub_id, pipe_mode="fifo")
+    res = _run(sub_id, pipe_mode="fifo", allow_write_student=True)
     # FIFO 在學生可寫時預期可用，但某些環境仍可能退回 devfd；至少不應因 pipe 失敗而 CE
     assert res["Status"] in ("AC", "TLE", "WA", "RE")
     assert res["pipeMode"] in ("fifo", "devfd")

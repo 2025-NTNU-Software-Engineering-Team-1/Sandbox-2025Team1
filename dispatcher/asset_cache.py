@@ -15,6 +15,7 @@ ASSET_FILENAME_MAP = {
     "scoring_script": "score.py",
     "makefile": "makefile.zip",
     "resource_data": "resource_data.zip",
+    "resource_data_teacher": "resource_data_teacher.zip",
 }
 
 

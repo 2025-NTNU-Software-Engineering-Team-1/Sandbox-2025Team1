@@ -35,6 +35,7 @@ class Sandbox:
         lang_id: str,
         compile_need: bool,
         stdin_path: Optional[str] = None,
+        allow_write: bool = False,
     ):
         with open('.config/submission.json') as f:
             config = json.load(f)
@@ -45,6 +46,7 @@ class Sandbox:
         self.stdin_path = stdin_path
         self.lang_id = lang_id
         self.compile_need = compile_need
+        self.allow_write = allow_write
         self.client = docker.APIClient(base_url=config['docker_url'])
 
     def run(self):
@@ -100,6 +102,8 @@ class Sandbox:
             network_disabled=True,
             working_dir=container_working_dir,
             host_config=host_config,
+            environment={"SANDBOX_ALLOW_WRITE": "1"}
+            if self.allow_write else None,
         )
         if container.get('Warning'):
             docker_msg = container.get('Warning')

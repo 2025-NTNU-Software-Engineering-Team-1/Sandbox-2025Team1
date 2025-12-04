@@ -29,7 +29,11 @@ from .artifact_collector import ArtifactCollector
 from .static_analysis import run_static_analysis, build_sa_ce_task_content
 from .custom_checker import ensure_custom_checker, run_custom_checker_case
 from .custom_scorer import ensure_custom_scorer, run_custom_scorer
-from .resource_data import prepare_resource_data, copy_resource_for_case
+from .resource_data import (
+    prepare_resource_data,
+    prepare_teacher_resource_data,
+    copy_resource_for_case,
+)
 
 
 class Dispatcher(threading.Thread):
@@ -89,12 +93,23 @@ class Dispatcher(threading.Thread):
             logger=logger(),
         )
         self.resource_dirs = {}
+        self.teacher_resource_dirs = {}
 
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}
 
     def contains(self, submission_id: str):
         return submission_id in self.result
+
+    def _common_dir(self, submission_id: str) -> pathlib.Path:
+        base = self.SUBMISSION_DIR / submission_id / "src"
+        common = base / "common"
+        if not common.exists():
+            common.mkdir(parents=True, exist_ok=True)
+        return common
+
+    def _case_dir(self, submission_id: str, case_no: str) -> pathlib.Path:
+        return self.SUBMISSION_DIR / submission_id / "src" / "cases" / case_no
 
     def inc_container(self):
         with self.container_count_lock:
@@ -541,6 +556,14 @@ class Dispatcher(threading.Thread):
                 )
                 if res_dir:
                     self.resource_dirs[submission_id] = res_dir
+            if getattr(submission_config, "resourceDataTeacher", False):
+                teacher_res_dir = prepare_teacher_resource_data(
+                    problem_id=problem_id,
+                    submission_path=submission_path,
+                    asset_paths=getattr(submission_config, "assetPaths", {}),
+                )
+                if teacher_res_dir:
+                    self.teacher_resource_dirs[submission_id] = teacher_res_dir
         except Exception as exc:
             err_msg = f"resource data preparation failed: {exc}"
             logger().warning(
@@ -648,6 +671,7 @@ class Dispatcher(threading.Thread):
         self.checker_payloads.pop(submission_id, None)
         self.artifact_collector.cleanup(submission_id)
         self.resource_dirs.pop(submission_id, None)
+        self.teacher_resource_dirs.pop(submission_id, None)
 
     def run(self):
         self.do_run = True
@@ -761,6 +785,7 @@ class Dispatcher(threading.Thread):
                 testdata_input_path="",
                 testdata_output_path="",
                 lang=["c11", "cpp17"][int(lang)],
+                common_dir=str(self._common_dir(submission_id)),
             ).compile()
             self.compile_results[submission_id] = res
             logger().debug(f'finish compiling, get status {res["Status"]}')
@@ -770,7 +795,7 @@ class Dispatcher(threading.Thread):
                 try:
                     self.artifact_collector.collect_binary(
                         submission_id=submission_id,
-                        src_dir=self.SUBMISSION_DIR / submission_id / "src",
+                        src_dir=self._common_dir(submission_id),
                     )
                     self.artifact_collector.upload_binary_only(
                         submission_id=submission_id)
@@ -805,6 +830,7 @@ class Dispatcher(threading.Thread):
                 testdata_input_path="",
                 testdata_output_path="",
                 lang=plan.lang_key or ["c11", "cpp17", "python3"][int(lang)],
+                common_dir=str(self._common_dir(submission_id)),
             )
             res = runner.build_with_make()
             if res.get("Status") != "AC":
@@ -837,7 +863,7 @@ class Dispatcher(threading.Thread):
                 try:
                     self.artifact_collector.collect_binary(
                         submission_id=submission_id,
-                        src_dir=self.SUBMISSION_DIR / submission_id / "src",
+                        src_dir=self._common_dir(submission_id),
                     )
                     self.artifact_collector.upload_binary_only(
                         submission_id=submission_id)
@@ -864,23 +890,61 @@ class Dispatcher(threading.Thread):
         meta_obj, _ = self.result.get(submission_id, (None, None))
         collect_artifacts = meta_obj and ArtifactCollector.should_collect_artifacts(
             meta_obj)
-        workdir = self.SUBMISSION_DIR / submission_id / "src"
-        if collect_artifacts:
-            try:
-                self.artifact_collector.snapshot_before_case(
+        common_dir = self._common_dir(submission_id)
+        case_dir = self._case_dir(submission_id, case_no)
+        teacher_res_dir = self.teacher_resource_dirs.get(submission_id)
+        # prepare per-case workdir: clean and copy common + resources
+        try:
+            if case_dir.exists():
+                shutil.rmtree(case_dir)
+            case_dir.mkdir(parents=True, exist_ok=True)
+            if common_dir.exists():
+                shutil.copytree(common_dir,
+                                case_dir,
+                                dirs_exist_ok=True,
+                                ignore=shutil.ignore_patterns("cases"))
+        except Exception as exc:
+            logger().warning(
+                "prepare case dir failed [id=%s case=%s]: %s",
+                submission_id,
+                case_no,
+                exc,
+            )
+            res = {
+                "Status": "JE",
+                "Stdout": "",
+                "Stderr": f"prepare case dir failed: {exc}",
+                "Duration": -1,
+                "MemUsage": -1,
+                "DockerExitCode": 1,
+            }
+            lock = self.locks.get(submission_id)
+            target_fn = self.on_case_complete
+            if lock:
+                with lock:
+                    target_fn(
+                        submission_id=submission_id,
+                        case_no=case_no,
+                        stdout=res["Stdout"],
+                        stderr=res["Stderr"],
+                        exit_code=res["DockerExitCode"],
+                        exec_time=res["Duration"],
+                        mem_usage=res["MemUsage"],
+                        prob_status=res["Status"],
+                    )
+            else:
+                target_fn(
                     submission_id=submission_id,
-                    task_no=int(case_no[:2]),
-                    case_no=int(case_no[2:]),
-                    workdir=workdir,
+                    case_no=case_no,
+                    stdout=res["Stdout"],
+                    stderr=res["Stderr"],
+                    exit_code=res["DockerExitCode"],
+                    exec_time=res["Duration"],
+                    mem_usage=res["MemUsage"],
+                    prob_status=res["Status"],
                 )
-            except Exception as exc:
-                logger().warning(
-                    "snapshot before case failed [id=%s case=%s]: %s",
-                    submission_id,
-                    case_no,
-                    exc,
-                )
-        # copy resource files for this case (after snapshot to avoid diff)
+            return
+        # copy resource files for this case
         res_dir = self.resource_dirs.get(submission_id)
         copied_resources = None
         copy_error = None
@@ -888,7 +952,7 @@ class Dispatcher(threading.Thread):
             try:
                 copied_resources = copy_resource_for_case(
                     resource_dir=res_dir,
-                    src_dir=workdir,
+                    src_dir=case_dir,
                     task_no=int(case_no[:2]),
                     case_no=int(case_no[2:]),
                 )
@@ -934,6 +998,21 @@ class Dispatcher(threading.Thread):
                     prob_status=res["Status"],
                 )
             return
+        if collect_artifacts:
+            try:
+                self.artifact_collector.snapshot_before_case(
+                    submission_id=submission_id,
+                    task_no=int(case_no[:2]),
+                    case_no=int(case_no[2:]),
+                    workdir=case_dir,
+                )
+            except Exception as exc:
+                logger().warning(
+                    "snapshot before case failed [id=%s case=%s]: %s",
+                    submission_id,
+                    case_no,
+                    exc,
+                )
         use_custom_checker = self._use_custom_checker(submission_id)
         checker_info = self.custom_checker_info.get(submission_id, {})
         if ExecutionMode(execution_mode) == ExecutionMode.INTERACTIVE:
@@ -941,6 +1020,8 @@ class Dispatcher(threading.Thread):
             submission_config, _ = self.result.get(submission_id, (None, None))
             teacher_lang_val = (getattr(submission_config, "assetPaths", {})
                                 or {}).get("teacherLang")
+            student_allow_write = bool(
+                getattr(submission_config, "allowWrite", False))
             mapping = {"c": "c11", "cpp": "cpp17", "py": "python3"}
             teacher_lang_key = mapping.get(str(teacher_lang_val or "").lower())
             if teacher_lang_key is None:
@@ -962,6 +1043,8 @@ class Dispatcher(threading.Thread):
                     teacher_first=teacher_first,
                     lang_key=lang_key,
                     teacher_lang_key=teacher_lang_key,
+                    case_dir=case_dir,
+                    student_allow_write=student_allow_write,
                 )
                 try:
                     self.inc_container()
@@ -971,7 +1054,7 @@ class Dispatcher(threading.Thread):
                 if copied_resources:
                     try:
                         from dispatcher.resource_data import cleanup_resource_files
-                        cleanup_resource_files(workdir, copied_resources)
+                        cleanup_resource_files(case_dir, copied_resources)
                     except Exception:
                         pass
         else:
@@ -982,6 +1065,9 @@ class Dispatcher(threading.Thread):
                 case_in_path,
                 case_out_path,
                 lang=lang_key,
+                common_dir=str(common_dir),
+                case_dir=str(case_dir),
+                allow_write=bool(getattr(meta_obj, "allowWrite", False)),
             )
             res = self.extract_compile_result(submission_id, lang)
             # Execute if compile successfully
@@ -994,14 +1080,14 @@ class Dispatcher(threading.Thread):
                 if copied_resources:
                     try:
                         from dispatcher.resource_data import cleanup_resource_files
-                        cleanup_resource_files(workdir, copied_resources)
+                        cleanup_resource_files(case_dir, copied_resources)
                     except Exception:
                         pass
             else:
                 if copied_resources:
                     try:
                         from dispatcher.resource_data import cleanup_resource_files
-                        cleanup_resource_files(workdir, copied_resources)
+                        cleanup_resource_files(case_dir, copied_resources)
                     except Exception:
                         pass
             if use_custom_checker and checker_info.get("error"):
@@ -1039,6 +1125,8 @@ class Dispatcher(threading.Thread):
                         mem_limit_kb=mem_limit,
                         image=self.custom_checker_image,
                         docker_url=runner.docker_url,
+                        student_workdir=case_dir,
+                        teacher_dir=teacher_res_dir,
                     )
                     res["Status"] = checker_result["status"]
                     message = checker_result.get("message", "")
@@ -1060,7 +1148,7 @@ class Dispatcher(threading.Thread):
                     submission_id=submission_id,
                     task_no=int(case_no[:2]),
                     case_no=int(case_no[2:]),
-                    workdir=workdir,
+                    workdir=case_dir,
                     stdout=res.get("Stdout", ""),
                     stderr=res.get("Stderr", ""),
                 )
@@ -1088,6 +1176,11 @@ class Dispatcher(threading.Thread):
                 mem_usage=res.get("MemUsage", -1),
                 prob_status=res["Status"],
             )
+        try:
+            if case_dir.exists():
+                shutil.rmtree(case_dir)
+        except Exception:
+            pass
 
     def extract_compile_result(self, submission_id: str, lang: Language):
         """
@@ -1199,8 +1292,7 @@ class Dispatcher(threading.Thread):
                     if self.artifact_collector.should_collect_binary(meta):
                         self.artifact_collector.collect_binary(
                             submission_id=submission_id,
-                            src_dir=self.SUBMISSION_DIR / submission_id /
-                            "src",
+                            src_dir=self._common_dir(submission_id),
                         )
                 except Exception as exc:
                     logger().warning(

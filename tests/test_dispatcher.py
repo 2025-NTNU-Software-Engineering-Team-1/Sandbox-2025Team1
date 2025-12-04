@@ -95,7 +95,7 @@ def _zip_meta(language: Language, strategy: BuildStrategy) -> Meta:
 def test_prepare_zip_submission_success(tmp_path):
     submission_id = "zip-sub"
     submission_dir = tmp_path / submission_id
-    src_dir = submission_dir / "src"
+    src_dir = submission_dir / "src" / "common"
     src_dir.mkdir(parents=True)
     (src_dir / "Makefile").write_text("all:\n\t@true\n")
 
@@ -114,7 +114,7 @@ def test_prepare_zip_submission_success(tmp_path):
 
 def test_make_normal_finalize_requires_aout(tmp_path):
     submission_dir = tmp_path / "zip-missing"
-    src_dir = submission_dir / "src"
+    src_dir = submission_dir / "src" / "common"
     src_dir.mkdir(parents=True)
     (src_dir / "Makefile").write_text("all:\n\t@true\n")
     plan = prepare_make_normal(
@@ -144,7 +144,7 @@ def _function_only_meta(language: Language) -> Meta:
 def test_prepare_function_only_submission(monkeypatch, tmp_path):
     submission_id = "func-sub"
     submission_dir = tmp_path / submission_id
-    src_dir = submission_dir / "src"
+    src_dir = submission_dir / "src" / "common"
     src_dir.mkdir(parents=True)
     (src_dir / "main.c").write_text("int foo(){return 0;}")
 
@@ -175,7 +175,7 @@ def test_prepare_function_only_submission(monkeypatch, tmp_path):
 def test_prepare_function_only_python(monkeypatch, tmp_path):
     submission_id = "func-py"
     submission_dir = tmp_path / submission_id
-    src_dir = submission_dir / "src"
+    src_dir = submission_dir / "src" / "common"
     src_dir.mkdir(parents=True)
     (src_dir / "main.py").write_text("print('hi')")
 
@@ -205,7 +205,7 @@ def test_prepare_function_only_python(monkeypatch, tmp_path):
 def test_make_normal_python_skips_make(tmp_path):
     submission_id = "zip-py"
     submission_dir = tmp_path / submission_id
-    src_dir = submission_dir / "src"
+    src_dir = submission_dir / "src" / "common"
     src_dir.mkdir(parents=True)
     (src_dir / "main.py").write_text("print('ok')")
 
@@ -222,6 +222,8 @@ def test_build_failure_clears_submission(monkeypatch, tmp_path):
     dispatcher.SUBMISSION_DIR = tmp_path
     dispatcher.testing = False
     submission_id = "build-ce"
+    (dispatcher.SUBMISSION_DIR / submission_id / "src" / "common").mkdir(
+        parents=True, exist_ok=True)
     meta = Meta(
         language=Language.C,
         tasks=[
@@ -450,6 +452,8 @@ def test_interactive_compile_error_short_circuits(monkeypatch):
     dispatcher = Dispatcher()
     dispatcher.testing = True
     submission_id = "it-compile-ce"
+    (dispatcher.SUBMISSION_DIR / submission_id / "src" / "common").mkdir(
+        parents=True, exist_ok=True)
     meta = Meta(
         language=Language.C,
         tasks=[

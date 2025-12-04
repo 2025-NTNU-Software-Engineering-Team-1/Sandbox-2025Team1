@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from dispatcher import config as dispatcher_config
 
@@ -10,7 +11,8 @@ class PathTranslator:
     """
 
     def __init__(self, config_path: str | Path | None = None):
-        self.cfg = dispatcher_config.get_submission_config(config_path)
+        cfg_path = config_path or os.getenv("SUBMISSION_CONFIG")
+        self.cfg = dispatcher_config.get_submission_config(cfg_path)
         self.working_dir = Path(self.cfg["working_dir"]).expanduser()
         self.sandbox_root = Path(
             self.cfg.get("sandbox_root",

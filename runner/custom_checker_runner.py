@@ -18,6 +18,8 @@ class CustomCheckerRunner:
     checker_relpath: str
     time_limit_ms: int
     mem_limit_kb: int
+    student_dir: str | None = None
+    teacher_dir: str | None = None
 
     def run(self) -> Dict[str, str]:
         client = docker.APIClient(base_url=self.docker_url)
@@ -27,6 +29,16 @@ class CustomCheckerRunner:
                 "mode": "rw",
             }
         }
+        if self.student_dir:
+            binds[self.student_dir] = {
+                "bind": "/workspace/student",
+                "mode": "ro"
+            }
+        if self.teacher_dir:
+            binds[self.teacher_dir] = {
+                "bind": "/workspace/teacher",
+                "mode": "ro"
+            }
         host_config = client.create_host_config(
             binds=binds,
             network_mode="none",

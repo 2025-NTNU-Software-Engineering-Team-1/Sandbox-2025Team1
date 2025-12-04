@@ -60,10 +60,15 @@ class SubmissionGenerator:
         prob_base_dir = self.submission_path / submission_id
         prob_base_dir.mkdir()
         logging.debug(f'write to {prob_base_dir}')
-        # write source
-        os.mkdir(prob_base_dir / 'src')
+        # write source under src/common, prepare cases dir
+        src_root = prob_base_dir / 'src'
+        os.mkdir(src_root)
+        common_dir = src_root / 'common'
+        os.mkdir(common_dir)
+        cases_dir = src_root / 'cases'
+        os.mkdir(cases_dir)
         for src in prob_data['source']:
-            with open(f'{prob_base_dir}/src/{src}', 'w') as f:
+            with open(common_dir / src, 'w') as f:
                 f.write(prob_data['source'][src])
         # write testcase
         testcase_dir = prob_base_dir / 'testcase'

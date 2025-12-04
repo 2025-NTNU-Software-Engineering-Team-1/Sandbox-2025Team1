@@ -33,7 +33,6 @@ def load_config():
         "studentUid": 1451,
         "sandboxGid": 1450,
         "studentAllowRead": False,
-        "studentAllowWrite": False,
     }
     try:
         data = json.loads(CONFIG_PATH.read_text())
@@ -263,8 +262,9 @@ def orchestrate(args: argparse.Namespace):
     teacher_uid = int(cfg.get("teacherUid", 1450))
     student_uid = int(cfg.get("studentUid", 1451))
     sandbox_gid = int(cfg.get("sandboxGid", 1450))
+    # NOTE: allow_read currently has no effect on interactive sandbox I/O.
     student_allow_read = bool(cfg.get("studentAllowRead", False))
-    student_allow_write = bool(cfg.get("studentAllowWrite", False))
+    student_allow_write = args.allow_write_student == "1" if args.allow_write_student is not None else False
 
     # FIFO 需要學生端開啟寫入 FIFO，若禁用寫入則改用 devfd 以避免卡死
     if args.pipe_mode == "fifo" and not student_allow_write:
@@ -334,8 +334,9 @@ def orchestrate(args: argparse.Namespace):
 
     stu_res = tmpdir / "student.result"
     # sandbox_interactive argv layout:
-    # [lang_id, compile, stdin, stdout, stderr, time_ms, mem_kb, allow_write, output_limit, proc_limit, allow_network_access, result_path]
+    # [lang_id, compile, stdin, stdout, stderr, time_ms, mem_kb, large_stack, output_limit, proc_limit, allow_network_access, result_path]
     allow_network_access = "0"  # 預設封網（seccomp 不載入 socket 系列）
+    large_stack = "1"  # keep stack limit aligned with memory limit; allow_write is controlled via env
     student_cmd = [
         "sandbox_interactive",
         str(LANG_IDS[student_lang]),
@@ -345,7 +346,7 @@ def orchestrate(args: argparse.Namespace):
         pipe_bundle["student"].get("stderr", str(tmpdir / "student.err")),
         str(args.time_limit),
         str(args.mem_limit),
-        "1" if student_allow_write else "0",  # allow_write
+        large_stack,
         str(output_limit),
         "10",  # process limit
         allow_network_access,
@@ -363,7 +364,7 @@ def orchestrate(args: argparse.Namespace):
             pipe_bundle["teacher"].get("stderr", str(tmpdir / "teacher.err")),
             str(args.time_limit),
             str(args.mem_limit),
-            "1",  # teacher allow_write（固定啟用）
+            large_stack,
             str(output_limit),
             "10",
             allow_network_access,
@@ -381,6 +382,7 @@ def orchestrate(args: argparse.Namespace):
         env_student["SANDBOX_ALLOW_WRITE"] = "1"
     else:
         env_student.pop("SANDBOX_ALLOW_WRITE", None)
+    # TODO: student read permission not wired to C sandbox yet; env kept for future support.
     if student_allow_read:
         env_student["SANDBOX_ALLOW_READ"] = "1"
     else:
@@ -604,6 +606,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--time-limit", type=int, required=True)
     parser.add_argument("--mem-limit", type=int, required=True)
     parser.add_argument("--case-path")
+    parser.add_argument(
+        "--allow-write-student",
+        choices=("0", "1"),
+        default=None,
+        help=
+        "Override student write permission; 1=allow, 0=deny. If omitted, write is denied.",
+    )
     parser.add_argument(
         "--pipe-mode",
         choices=("auto", "fifo", "devfd"),

@@ -59,7 +59,7 @@ def prepare_make_normal(
 ) -> BuildPlan:
     return _build_plan_for_student_artifacts(
         language=meta.language,
-        src_dir=submission_dir / "src",
+        src_dir=submission_dir / "src" / "common",
     )
 
 
@@ -79,7 +79,7 @@ def prepare_make_interactive(
         submission_dir=submission_dir,
     )
 
-    src_dir = submission_dir / "src"
+    src_dir = submission_dir / "src" / "common"
     language = Language(meta.language)
     submission_mode = SubmissionMode(meta.submissionMode)
 
@@ -107,7 +107,7 @@ def prepare_function_only_submission(
     meta: Meta,
     submission_dir: Path,
 ) -> BuildPlan:
-    src_dir = submission_dir / "src"
+    src_dir = submission_dir / "src" / "common"
     student_path = _student_entry_path(src_dir=src_dir, language=meta.language)
     if not student_path.exists():
         raise BuildStrategyError("student source not found")

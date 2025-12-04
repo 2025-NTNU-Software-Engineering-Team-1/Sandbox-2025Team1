@@ -45,6 +45,8 @@ def run_custom_checker_case(
     mem_limit_kb: int,
     image: str,
     docker_url: str,
+    student_workdir: Path | None = None,
+    teacher_dir: Path | None = None,
 ) -> Dict[str, str]:
     """Execute custom checker for a single case and return status/message."""
     workdir = checker_path.parent / "work" / case_no
@@ -60,6 +62,10 @@ def run_custom_checker_case(
 
         translator = PathTranslator()
         host_workdir = translator.to_host(workdir)
+        student_dir_host = translator.to_host(student_workdir) if (
+            student_workdir is not None) else None
+        teacher_dir_host = translator.to_host(teacher_dir) if (
+            teacher_dir is not None) else None
 
         runner = CustomCheckerRunner(
             submission_id=submission_id,
@@ -70,6 +76,10 @@ def run_custom_checker_case(
             checker_relpath="custom_checker.py",
             time_limit_ms=time_limit_ms,
             mem_limit_kb=mem_limit_kb,
+            student_dir=str(student_dir_host)
+            if student_dir_host is not None else None,
+            teacher_dir=str(teacher_dir_host)
+            if teacher_dir_host is not None else None,
         )
         result = runner.run()
     except CustomCheckerError as exc:

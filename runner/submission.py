@@ -19,6 +19,9 @@ class SubmissionRunner:
         testdata_output_path: str,
         special_judge: bool = False,
         lang: Optional[str] = None,
+        common_dir: Optional[str] = None,
+        case_dir: Optional[str] = None,
+        allow_write: bool = False,
     ):
         # config file
         translator = PathTranslator()
@@ -31,6 +34,9 @@ class SubmissionRunner:
         self.mem_limit = mem_limit
         self.testdata_input_path = testdata_input_path  # absoulte path str
         self.testdata_output_path = testdata_output_path  # absoulte path str
+        self.common_dir = pathlib.Path(common_dir) if common_dir else None
+        self.case_dir = pathlib.Path(case_dir) if case_dir else None
+        self.allow_write = allow_write
         # working_dir
         self.working_dir = str(translator.working_dir)
         self.docker_url = submission_cfg.get('docker_url',
@@ -47,9 +53,10 @@ class SubmissionRunner:
                 time_limit=20000,  # 20s
                 mem_limit=1048576,  # 1GB
                 image=self.image[self.lang],
-                src_dir=str(self.translator.to_host(self._src_dir())),
+                src_dir=str(self.translator.to_host(self._compile_src_dir())),
                 lang_id=self.lang_id[self.lang],
                 compile_need=True,
+                allow_write=False,
             ).run()
         except JudgeError:
             return {'Status': 'JE'}
@@ -77,6 +84,7 @@ class SubmissionRunner:
                 src_dir=str(src_dir_host),
                 lang_id=cfg["lang_id"][lang],
                 compile_need=True,
+                allow_write=False,
             ).run()
         except JudgeError:
             return {'Status': 'JE'}
@@ -119,11 +127,12 @@ class SubmissionRunner:
                 time_limit=self.time_limit,
                 mem_limit=self.mem_limit,
                 image=self.image[self.lang],
-                src_dir=str(self.translator.to_host(self._src_dir())),
+                src_dir=str(self.translator.to_host(self._run_src_dir())),
                 lang_id=self.lang_id[self.lang],
                 compile_need=False,
                 stdin_path=str(
                     self.translator.to_host(self.testdata_input_path)),
+                allow_write=self.allow_write,
             ).run()
         except JudgeError:
             return {'Status': 'JE'}
@@ -142,7 +151,7 @@ class SubmissionRunner:
         return dataclasses.asdict(result)
 
     def build_with_make(self):
-        src_dir = self._src_dir()
+        src_dir = self._compile_src_dir()
         client = docker.APIClient(base_url=self.docker_url)
         lang_key = self.lang if self.lang in self.image else 'cpp17'
         host_src_dir = self.translator.to_host(src_dir)
@@ -185,7 +194,21 @@ class SubmissionRunner:
         }
 
     def _src_dir(self) -> str:
-        return str(pathlib.Path(self.working_dir) / self.submission_id / 'src')
+        base = pathlib.Path(self.working_dir) / self.submission_id / 'src'
+        common = base / "common"
+        if self.common_dir:
+            return str(self.common_dir)
+        return str(common)
+
+    def _compile_src_dir(self) -> str:
+        """Source directory used for compile/build steps (common)."""
+        return str(pathlib.Path(self._src_dir()))
+
+    def _run_src_dir(self) -> str:
+        """Runtime workdir; defaults to case_dir if provided."""
+        if self.case_dir:
+            return str(self.case_dir)
+        return self._compile_src_dir()
 
     @classmethod
     def strip(cls, s: str) -> list:

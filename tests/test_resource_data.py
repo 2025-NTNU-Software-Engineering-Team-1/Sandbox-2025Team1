@@ -2,7 +2,13 @@ import io
 import zipfile
 from pathlib import Path
 
-from dispatcher.resource_data import prepare_resource_data, copy_resource_for_case
+from dispatcher.custom_checker import run_custom_checker_case
+from dispatcher.resource_data import (
+    prepare_resource_data,
+    prepare_teacher_resource_data,
+    copy_resource_for_case,
+)
+from runner.path_utils import PathTranslator
 
 
 class DummyAsset:
@@ -48,3 +54,79 @@ def test_prepare_and_copy_resource_data(tmp_path, monkeypatch):
     from dispatcher.resource_data import cleanup_resource_files
     cleanup_resource_files(src_dir, copied)
     assert not (src_dir / "config.txt").exists()
+
+
+def test_prepare_teacher_resource_data_keeps_existing(tmp_path, monkeypatch):
+    res_zip = tmp_path / "resource_data_teacher.zip"
+    with zipfile.ZipFile(res_zip, "w") as zf:
+        zf.writestr("0000_teacher.txt", "t0")
+
+    def fake_ensure(problem_id, asset_type, filename=None):
+        assert asset_type == "resource_data_teacher"
+        return res_zip
+
+    monkeypatch.setattr("dispatcher.resource_data.ensure_custom_asset",
+                        fake_ensure)
+
+    submission_path = tmp_path / "submissions" / "s2"
+    teacher_dir = submission_path / "teacher"
+    teacher_dir.mkdir(parents=True, exist_ok=True)
+    existing = teacher_dir / "Teacher_main"
+    existing.write_text("keep")
+
+    res_dir = prepare_teacher_resource_data(
+        problem_id=2,
+        submission_path=submission_path,
+        asset_paths={"resource_data_teacher": "resource_data_teacher.zip"},
+    )
+    assert res_dir and res_dir.exists()
+    assert existing.read_text() == "keep"
+    assert (teacher_dir / "0000_teacher.txt").read_text() == "t0"
+
+
+def test_custom_checker_receives_teacher_dir(tmp_path, monkeypatch):
+    submission_id = "s3"
+    submission_dir = tmp_path / submission_id
+    checker_dir = submission_dir / "checker"
+    checker_dir.mkdir(parents=True, exist_ok=True)
+    checker_path = checker_dir / "custom_checker.py"
+    checker_path.write_text("print('ok')")
+
+    case_in = tmp_path / "0000.in"
+    case_out = tmp_path / "0000.out"
+    case_in.write_text("1")
+    case_out.write_text("1")
+
+    teacher_dir = submission_dir / "teacher"
+    teacher_dir.mkdir(parents=True, exist_ok=True)
+
+    captured = {}
+
+    class DummyRunner:
+
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def run(self):
+            return {"stdout": "STATUS:AC\n", "exit_code": 0, "stderr": ""}
+
+    monkeypatch.setattr("dispatcher.custom_checker.CustomCheckerRunner",
+                        DummyRunner)
+
+    res = run_custom_checker_case(
+        submission_id=submission_id,
+        case_no="0000",
+        checker_path=checker_path,
+        case_in_path=case_in,
+        case_ans_path=case_out,
+        student_output="1",
+        time_limit_ms=1000,
+        mem_limit_kb=1024,
+        image="dummy",
+        docker_url="unix://dummy",
+        student_workdir=submission_dir / "src" / "cases" / "0000",
+        teacher_dir=teacher_dir,
+    )
+    host_teacher = str(PathTranslator().to_host(teacher_dir))
+    assert captured.get("teacher_dir") == host_teacher
+    assert res["status"] == "AC"

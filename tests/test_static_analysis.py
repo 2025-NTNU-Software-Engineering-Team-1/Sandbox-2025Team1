@@ -3,13 +3,23 @@ from pathlib import Path
 from dispatcher.static_analysis import StaticAnalyzer
 from dispatcher.constant import Language
 
+BASE = Path(__file__).resolve().parent
+
 
 def test_python_static_analysis_violations():
-    test_file_path = Path("tests/static_analysis/test_file")
+    test_file_path = BASE / "static_analysis" / "test_file"
     rules_path = test_file_path / "rules.json"
 
     with open(rules_path, "r", encoding="utf-8") as f:
         rules = json.load(f)
+
+    # prepare common layout
+    common = test_file_path / "src" / "common"
+    common.mkdir(parents=True, exist_ok=True)
+    for fname in ("main.py", ):
+        src = test_file_path / fname
+        if src.exists():
+            (common / fname).write_bytes(src.read_bytes())
 
     analyzer = StaticAnalyzer()
 
@@ -21,11 +31,18 @@ def test_python_static_analysis_violations():
 
 
 def test_c_static_analysis_violations():
-    test_file_path = Path("tests/static_analysis/test_file")
+    test_file_path = BASE / "static_analysis" / "test_file"
     rules_path = test_file_path / "rules.json"
 
     with open(rules_path, "r", encoding="utf-8") as f:
         rules = json.load(f)
+
+    common = test_file_path / "src" / "common"
+    common.mkdir(parents=True, exist_ok=True)
+    for fname in ("_main.c", "main.cpp"):
+        src = test_file_path / fname
+        if src.exists():
+            (common / Path(fname).name).write_bytes(src.read_bytes())
 
     analyzer = StaticAnalyzer()
     result = analyzer.analyze(submission_id=str(test_file_path),
@@ -34,7 +51,9 @@ def test_c_static_analysis_violations():
 
 
 def test_python_syntax_blacklist_custom(tmp_path):
-    src = tmp_path / "main.py"
+    common = tmp_path / "src" / "common"
+    common.mkdir(parents=True, exist_ok=True)
+    src = common / "main.py"
     src.write_text("def f(x):\n"
                    "    if x > 0:\n"
                    "        return x\n"
@@ -54,7 +73,9 @@ def test_python_syntax_blacklist_custom(tmp_path):
 
 
 def test_python_syntax_whitelist_custom(tmp_path):
-    src = tmp_path / "main.py"
+    common = tmp_path / "src" / "common"
+    common.mkdir(parents=True, exist_ok=True)
+    src = common / "main.py"
     src.write_text("def f(x):\n"
                    "    if x > 0:\n"
                    "        return x\n"

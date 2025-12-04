@@ -65,7 +65,7 @@ def test_extract_zip_submission(tmp_path):
         testdata=testdata_root,
     )
     submission_dir = tmp_path / "zip-001"
-    assert (submission_dir / "src" / "Makefile").exists()
+    assert (submission_dir / "src" / "common" / "Makefile").exists()
     assert (submission_dir / "testcase" / "0000.in").exists()
 
 
@@ -105,7 +105,7 @@ def test_extract_zip_python_skips_makefile_requirement(tmp_path):
         testdata=testdata_root,
     )
     submission_dir = tmp_path / "zip-py"
-    assert (submission_dir / "src" / "main.py").exists()
+    assert (submission_dir / "src" / "common" / "main.py").exists()
 
 
 def test_function_only_rejects_zip_submission(tmp_path):

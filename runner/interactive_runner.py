@@ -20,6 +20,8 @@ class InteractiveRunner:
     lang_key: str  # c11 | cpp17 | python3
     teacher_lang_key: str | None = None
     pipe_mode: str = "auto"
+    case_dir: Path | None = None
+    student_allow_write: bool = False
 
     def run(self) -> dict:
         translator = PathTranslator()
@@ -31,7 +33,11 @@ class InteractiveRunner:
         submission_root = translator.working_dir / self.submission_id
         host_root = translator.host_root
         teacher_dir = submission_root / "teacher"
-        student_dir = submission_root / "src"
+        if self.case_dir is None:
+            raise ValueError("case_dir is required for interactive run")
+        student_dir = self.case_dir
+        if not student_dir.exists():
+            raise ValueError(f"interactive case_dir missing: {student_dir}")
         testcase_dir = submission_root / "testcase"
         submission_root_host = translator.to_host(submission_root)
         teacher_dir_host = translator.to_host(teacher_dir)
@@ -95,6 +101,10 @@ class InteractiveRunner:
             command.append("--teacher-first")
         if case_path_container:
             command += ["--case-path", case_path_container]
+        if self.student_allow_write:
+            command += ["--allow-write-student", "1"]
+        else:
+            command += ["--allow-write-student", "0"]
 
         env = {}
         for key in ("KEEP_INTERACTIVE_TMP", "KEEP_INTERACTIVE_SUBMISSIONS"):

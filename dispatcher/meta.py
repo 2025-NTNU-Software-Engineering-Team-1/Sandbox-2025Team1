@@ -30,6 +30,9 @@ class Meta(BaseModel):
     scorerAsset: Optional[str] = None
     artifactCollection: list[str] = Field(default_factory=list)
     resourceData: bool = False
+    resourceDataTeacher: bool = False
+    allowRead: bool = False
+    allowWrite: bool = False
 
     @validator("executionMode", pre=True)
     def _coerce_execution_mode(cls, v):
