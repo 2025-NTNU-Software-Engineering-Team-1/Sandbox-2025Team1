@@ -79,10 +79,25 @@ def copy_resource_for_case(resource_dir: Path, src_dir: Path, task_no: int,
                            case_no: int):
     """Copy resource files for specific case into src_dir, stripping prefix."""
     if not resource_dir or not resource_dir.exists():
+        logger().warning(
+            "resource_dir not found or empty [task=%s case=%s dir=%s]",
+            task_no,
+            case_no,
+            resource_dir,
+        )
         return
     prefix = f"{task_no:02d}{case_no:02d}_"
     copied = []
-    for path in resource_dir.rglob("*"):
+    all_files = list(resource_dir.rglob("*"))
+    logger().info(
+        "copy_resource_for_case [task=%s case=%s prefix=%s] found %d files in %s",
+        task_no,
+        case_no,
+        prefix,
+        len(all_files),
+        resource_dir,
+    )
+    for path in all_files:
         if not path.is_file():
             continue
         name = path.name
@@ -95,6 +110,13 @@ def copy_resource_for_case(resource_dir: Path, src_dir: Path, task_no: int,
                 dest.unlink()
             shutil.copy(path, dest)
             copied.append(dest)
+            logger().info(
+                "resource copied [task=%s case=%s]: %s -> %s",
+                task_no,
+                case_no,
+                path.name,
+                dest,
+            )
         except Exception as exc:
             logger().warning(
                 "resource copy failed [task=%s case=%s file=%s]: %s",
@@ -104,6 +126,13 @@ def copy_resource_for_case(resource_dir: Path, src_dir: Path, task_no: int,
                 exc,
             )
 
+    if not copied:
+        logger().warning(
+            "no files copied for [task=%s case=%s prefix=%s]",
+            task_no,
+            case_no,
+            prefix,
+        )
     return copied
 
 
