@@ -222,7 +222,7 @@ def _zip_meta(language: Language, strategy: BuildStrategy) -> Meta:
 def test_prepare_zip_submission_success(tmp_path):
     submission_id = "zip-sub"
     submission_dir = tmp_path / submission_id
-    src_dir = submission_dir / "src"
+    src_dir = submission_dir / "src" / "common"
     src_dir.mkdir(parents=True)
     (src_dir / "Makefile").write_text("all:\n\t@true\n")
 

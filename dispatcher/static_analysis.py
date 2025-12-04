@@ -158,8 +158,11 @@ def run_static_analysis(
     analyzer = StaticAnalyzer()
     try:
         if is_zip_mode:
+            src_base = submission_path / "src"
+            if (src_base / "common").exists():
+                src_base = src_base / "common"
             analysis_result = analyzer.analyze_zip_sources(
-                source_dir=submission_path / "src",
+                source_dir=src_base,
                 language=meta.language,
                 rules=rules_json,
             )
@@ -272,6 +275,12 @@ class StaticAnalyzer:
                     submission_cfg["working_dir"]) / str(submission_id)
         if (source_code_path / "src").exists():
             source_code_path = source_code_path / "src"
+        common_dir = source_code_path / "common"
+        if common_dir.exists():
+            source_code_path = common_dir
+        else:
+            raise StaticAnalysisError(
+                f"common dir missing for SA: {common_dir}")
         source_code_path = source_code_path.resolve()
 
         logger().debug(f"Analysis: {source_code_path} (lang: {language})")

@@ -25,15 +25,19 @@ def extract(
             logger().warning(f"empty task. [id={submission_id}/{i:02d}]")
     code_dir = submission_dir / "src"
     code_dir.mkdir()
+    common_dir = code_dir / "common"
+    common_dir.mkdir()
+    cases_dir = code_dir / "cases"
+    cases_dir.mkdir()
     submission_mode = SubmissionMode(meta.submissionMode)
     if (getattr(meta, "executionMode",
                 ExecutionMode.GENERAL) == ExecutionMode.FUNCTION_ONLY
             and submission_mode == SubmissionMode.ZIP):
         raise ValueError("function-only submissions only accept code uploads")
     if submission_mode == SubmissionMode.ZIP:
-        _extract_zip_source(code_dir, source, int(meta.language))
+        _extract_zip_source(common_dir, source, int(meta.language))
     else:
-        _extract_code_source(code_dir, source, int(meta.language))
+        _extract_code_source(common_dir, source, int(meta.language))
     # copy testdata
     testcase_dir = submission_dir / "testcase"
     shutil.copytree(testdata, testcase_dir)
@@ -43,7 +47,7 @@ def extract(
         if chaos_dir.is_file():
             raise ValueError("'chaos' can not be a file")
         for chaos_file in chaos_dir.iterdir():
-            shutil.move(str(chaos_file), str(code_dir))
+            shutil.move(str(chaos_file), str(common_dir))
         os.rmdir(chaos_dir)
 
 

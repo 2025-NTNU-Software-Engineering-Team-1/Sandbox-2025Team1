@@ -87,6 +87,16 @@ class Dispatcher(threading.Thread):
     def contains(self, submission_id: str):
         return submission_id in self.result
 
+    def _common_dir(self, submission_id: str) -> pathlib.Path:
+        base = self.SUBMISSION_DIR / submission_id / "src"
+        common = base / "common"
+        if not common.exists():
+            common.mkdir(parents=True, exist_ok=True)
+        return common
+
+    def _case_dir(self, submission_id: str, case_no: str) -> pathlib.Path:
+        return self.SUBMISSION_DIR / submission_id / "src" / "cases" / case_no
+
     def inc_container(self):
         with self.container_count_lock:
             self.container_count += 1
@@ -293,10 +303,12 @@ class Dispatcher(threading.Thread):
         if external_config:
             model = external_config.get("model", "black").lower()
             ip_list = external_config.get("ip", [])
+            url_list = external_config.get("url", [])
 
             # white model
             # black model and ip list not empty
-            if model == "white" or (model == "black" and ip_list):
+            if model == "white" or (model == "black" and
+                                    (ip_list or url_list)):
                 enable_router_mode = True
 
         if enable_router_mode:
@@ -619,6 +631,64 @@ class Dispatcher(threading.Thread):
         network_mode: str = "none",
     ):
         lang_key = ["c11", "cpp17", "python3"][int(lang)]
+        meta_obj, _ = self.result.get(submission_id, (None, None))
+
+        common_dir = self._common_dir(submission_id)
+        case_dir = self._case_dir(submission_id, case_no)
+
+        try:
+            if case_dir.exists():
+                shutil.rmtree(case_dir)
+            case_dir.mkdir(parents=True, exist_ok=True)
+            if common_dir.exists():
+                shutil.copytree(
+                    common_dir,
+                    case_dir,
+                    dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("cases"),
+                )
+        except Exception as exc:
+            logger().warning(
+                "prepare case dir failed [id=%s case=%s]: %s",
+                submission_id,
+                case_no,
+                exc,
+            )
+            res = {
+                "Status": "JE",
+                "Stdout": "",
+                "Stderr": f"prepare case dir failed: {exc}",
+                "Duration": -1,
+                "MemUsage": -1,
+                "DockerExitCode": 1,
+            }
+            lock = self.locks.get(submission_id)
+            target_fn = self.on_case_complete
+            if lock:
+                with lock:
+                    target_fn(
+                        submission_id=submission_id,
+                        case_no=case_no,
+                        stdout=res["Stdout"],
+                        stderr=res["Stderr"],
+                        exit_code=res["DockerExitCode"],
+                        exec_time=res["Duration"],
+                        mem_usage=res["MemUsage"],
+                        prob_status=res["Status"],
+                    )
+            else:
+                target_fn(
+                    submission_id=submission_id,
+                    case_no=case_no,
+                    stdout=res["Stdout"],
+                    stderr=res["Stderr"],
+                    exit_code=res["DockerExitCode"],
+                    exec_time=res["Duration"],
+                    mem_usage=res["MemUsage"],
+                    prob_status=res["Status"],
+                )
+            return
+
         if ExecutionMode(execution_mode) == ExecutionMode.INTERACTIVE:
             # Fetch teacher language from meta (set by backend) to avoid running teacher with student lang.
             submission_config, _ = self.result.get(submission_id, (None, None))
@@ -656,6 +726,9 @@ class Dispatcher(threading.Thread):
                 case_out_path,
                 lang=lang_key,
                 network_mode=network_mode,
+                common_dir=str(common_dir),
+                case_dir=str(case_dir),
+                allow_write=bool(getattr(meta_obj, "allowWrite", False)),
             )
             res = self.extract_compile_result(submission_id, lang)
             if res["Status"] != "CE":
@@ -677,6 +750,12 @@ class Dispatcher(threading.Thread):
                 mem_usage=res.get("MemUsage", -1),
                 prob_status=res["Status"],
             )
+
+        try:
+            if case_dir.exists():
+                shutil.rmtree(case_dir)
+        except Exception:
+            pass
 
     def extract_compile_result(self, submission_id: str, lang: Language):
         """

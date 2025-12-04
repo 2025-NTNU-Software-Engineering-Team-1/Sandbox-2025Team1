@@ -25,42 +25,58 @@ nft add rule inet filter output tcp dport 53 accept
 # 3. UID based rules
 # Teacher (UID 1450): allow 
 nft add rule inet filter output meta skuid 1450 accept
-# Student (UID 1451): jump to student_out for checking
 nft add rule inet filter output meta skuid 1451 jump student_out
-# Root (UID 0): allow (Router itself needs to operate)
 nft add rule inet filter output meta skuid 0 accept
 
 # 4. Read JSON config
 if [ -f "$CONFIG_FILE" ]; then
     MODEL=$(jq -r '.model // "black"' "$CONFIG_FILE" | tr '[:upper:]' '[:lower:]')
     IPS=$(jq -r '.ip[] // empty' "$CONFIG_FILE")
-    
+    URLS=$(jq -r '.url[] // empty' "$CONFIG_FILE")
+
     echo "Mode: $MODEL"
+
+    # URL to IP resolution
+    RESOLVED_IPS=""
+    for url in $URLS; do
+        domain=$(echo "$url" | sed -E 's|https?://||' | cut -d/ -f1)
+        echo "Resolving domain: $domain"
+
+        ips=$(dig +short "$domain" A)
+
+        if [ -n "$ips" ]; then
+            RESOLVED_IPS="$RESOLVED_IPS $ips"
+            echo "Resolved $domain to: $ips"
+        else
+            echo "Failed to resolve $domain"
+        fi
+    done
+    
+    ALL_IPS="$IPS $RESOLVED_IPS"
 
     if [ "$MODEL" == "white" ]; then
         # === Whitelist mode ===
-        for ip in $IPS; do
+        for ip in $ALL_IPS; do
             echo "Allow: $ip"
-            nft add rule inet filter student_out ip daddr "$ip" accept
+            if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                nft add rule inet filter student_out ip daddr "$ip" accept
+            fi
         done
-        # Finally reject all (Reject returns an error, faster than Drop)
         nft add rule inet filter student_out reject
     else
         # === Blacklist mode ===
-        for ip in $IPS; do
+        for ip in $ALL_IPS; do
             echo "Deny: $ip"
-            nft add rule inet filter student_out ip daddr "$ip" reject
+            if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                nft add rule inet filter student_out ip daddr "$ip" reject
+            fi
         done
-        # Finally accept all
         nft add rule inet filter student_out accept
     fi
 else
     echo "No config found, allowing all."
 fi
 
-# for debugging: list the applied rules
 nft list ruleset
-
 echo "=== Router Rules Applied. Sleeping... ==="
-# Keep the container running to maintain the network namespace
 exec sleep infinity
