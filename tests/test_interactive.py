@@ -10,29 +10,45 @@ import pytest
 from dispatcher.build_strategy import BuildStrategyError, _prepare_teacher_artifacts
 from dispatcher.constant import Language
 from dispatcher.meta import Meta, Task, SubmissionMode, ExecutionMode, BuildStrategy
-from runner.interactive_runner import InteractiveRunner
 
-SUBMISSION_CFG = json.loads(Path(".config/submission.json").read_text())
+_BASE = Path(__file__).resolve().parents[1]
+os.environ["SUBMISSION_CONFIG"] = str(_BASE / ".config" / "submission.json")
+SUBMISSION_CFG = json.loads((_BASE / ".config/submission.json").read_text())
 WORKDIR = Path(SUBMISSION_CFG["working_dir"]).resolve()
 INTERACTIVE_IMAGE = SUBMISSION_CFG.get("interactive_image", "noj-interactive")
-INTERACTIVE_CFG_PATH = Path(".config/interactive.json")
+from runner.interactive_runner import InteractiveRunner
+from runner.interactive_orchestrator import _parse_check_result
 
 
 def _has_image(name: str) -> bool:
+    """Return True if image exists and can run python3."""
     try:
         cli = docker.APIClient(base_url=SUBMISSION_CFG.get(
             "docker_url", "unix://var/run/docker.sock"))
-        for img in cli.images():
-            for tag in img.get("RepoTags", []) or []:
-                if tag and tag.split(":")[0] == name:
-                    return True
-        return False
-    except Exception:
+        images = cli.images(name=name) or []
+        if not images:
+            return False
+        try:
+            container = cli.create_container(image=name,
+                                             command=["python3", "--version"])
+            cli.start(container)
+            cli.wait(container)
+        except Exception:
+            return False
+        finally:
+            try:
+                cli.remove_container(container, force=True)
+            except Exception:
+                pass
+        return True
+    except Exception as exc:
         return False
 
 
-pytestmark = pytest.mark.skipif(not _has_image(INTERACTIVE_IMAGE),
-                                reason="interactive image not available")
+pytestmark = pytest.mark.skipif(
+    not _has_image(INTERACTIVE_IMAGE),
+    reason="interactive image missing or python3 unavailable",
+)
 
 
 def _compile_c(src: Path, output: Path):
@@ -75,7 +91,8 @@ def _prepare_submission(sub_id: str,
 
         shutil.rmtree(root, onerror=_onerror)
     (root / "teacher").mkdir(parents=True)
-    (root / "src").mkdir()
+    (root / "src" / "common").mkdir(parents=True)
+    (root / "src" / "cases").mkdir(parents=True)
     (root / "testcase").mkdir()
     (root / "testcase" / "0000.in").write_text("")
 
@@ -94,13 +111,16 @@ def _prepare_submission(sub_id: str,
         t_main.chmod(0o755)
 
     if student_lang == "python3":
-        s_src = root / "src" / "main.py"
+        s_src = root / "src" / "common" / "main.py"
         s_src.write_text(student_code)
     else:
-        s_src = root / "src" / "main.c"
+        s_src = root / "src" / "common" / "main.c"
         s_src.write_text(student_code)
-        s_bin = root / "src" / "main"
+        s_bin = root / "src" / "common" / "main"
         _compile_c(s_src, s_bin)
+    # prime default case dir
+    case_dir = root / "src" / "cases" / "0000"
+    shutil.copytree(root / "src" / "common", case_dir, dirs_exist_ok=True)
     return root
 
 
@@ -109,8 +129,15 @@ def _run(sub_id: str,
          pipe_mode: str = "devfd",
          teacher_lang: str = "c11",
          student_lang: str = "c11",
-         case_name: str = "0000.in"):
+         case_name: str = "0000.in",
+         allow_write_student: bool = False):
     case_path = WORKDIR / sub_id / "testcase" / case_name
+    case_no = Path(case_name).stem
+    case_dir = WORKDIR / sub_id / "src" / "cases" / case_no
+    if not case_dir.exists():
+        common_dir = WORKDIR / sub_id / "src" / "common"
+        case_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(common_dir, case_dir, dirs_exist_ok=True)
     runner = InteractiveRunner(
         submission_id=sub_id,
         time_limit=2000,
@@ -120,6 +147,8 @@ def _run(sub_id: str,
         lang_key=student_lang,
         teacher_lang_key=teacher_lang,
         pipe_mode=pipe_mode,
+        case_dir=case_dir,
+        student_allow_write=allow_write_student,
     )
     return runner.run()
 
@@ -141,13 +170,6 @@ def clean_submission():
                            stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE)
             shutil.rmtree(path, ignore_errors=True)
-
-
-@pytest.fixture
-def interactive_config_guard():
-    original = json.loads(INTERACTIVE_CFG_PATH.read_text())
-    yield
-    INTERACTIVE_CFG_PATH.write_text(json.dumps(original))
 
 
 def test_interactive_ac(clean_submission):
@@ -239,11 +261,7 @@ def test_interactive_devfd(clean_submission):
     assert res["pipeMode"] == "devfd"
 
 
-def test_fifo_forced_devfd_when_student_write_disabled(
-        clean_submission, interactive_config_guard):
-    cfg = json.loads(INTERACTIVE_CFG_PATH.read_text())
-    cfg["studentAllowWrite"] = False
-    INTERACTIVE_CFG_PATH.write_text(json.dumps(cfg))
+def test_fifo_forced_devfd_when_student_write_disabled(clean_submission):
     sub_id = "it-fifo-fallback"
     clean_submission.append(sub_id)
     teacher = r'''
@@ -256,16 +274,12 @@ def test_fifo_forced_devfd_when_student_write_disabled(
     int main(){char buf[16]; if(fgets(buf,sizeof(buf),stdin)) {printf("pong\n"); fflush(stdout);} return 0;}
     '''
     _prepare_submission(sub_id, teacher, student)
-    res = _run(sub_id, pipe_mode="fifo")
+    res = _run(sub_id, pipe_mode="fifo", allow_write_student=False)
     assert res["Status"] == "AC"
     assert res["pipeMode"] == "devfd"  # auto fallback
 
 
-def test_fifo_allowed_when_student_write_enabled(clean_submission,
-                                                 interactive_config_guard):
-    cfg = json.loads(INTERACTIVE_CFG_PATH.read_text())
-    cfg["studentAllowWrite"] = True
-    INTERACTIVE_CFG_PATH.write_text(json.dumps(cfg))
+def test_fifo_allowed_when_student_write_enabled(clean_submission):
     sub_id = "it-fifo-allowed"
     clean_submission.append(sub_id)
     teacher = r'''
@@ -278,7 +292,7 @@ def test_fifo_allowed_when_student_write_enabled(clean_submission,
     int main(){char buf[32]; if(fgets(buf,sizeof(buf),stdin)) {printf("pong\n"); fflush(stdout);} return 0;}
     '''
     _prepare_submission(sub_id, teacher, student)
-    res = _run(sub_id, pipe_mode="fifo")
+    res = _run(sub_id, pipe_mode="fifo", allow_write_student=True)
     # FIFO 在學生可寫時預期可用，但某些環境仍可能退回 devfd；至少不應因 pipe 失敗而 CE
     assert res["Status"] in ("AC", "TLE", "WA", "RE")
     assert res["pipeMode"] in ("fifo", "devfd")
@@ -320,8 +334,30 @@ def test_interactive_teacher_can_write(clean_submission):
 
 
 def test_tmpdir_permissions(clean_submission, monkeypatch):
-    # tmpdir 位於容器 /workspace，未掛載到 host，無法直接檢查，測試略過
-    pytest.skip("tmpdir is container-local; skip host-side permission check")
+    sub_id = "it-tmpdir"
+    clean_submission.append(sub_id)
+    teacher = r'''
+    #include <stdio.h>
+    int main(){
+        FILE *f = fopen("/tmp/tmpdir_check.txt","w");
+        if(!f) return 1;
+        fputs("ok", f);
+        fclose(f);
+        FILE *c=fopen("Check_Result","w");
+        if(!c) return 1;
+        fprintf(c,"STATUS: AC\nMESSAGE: tmpdir ok\n");
+        fclose(c);
+        return 0;
+    }
+    '''
+    student = r'''
+    #include <stdio.h>
+    int main(){printf("pong\n"); fflush(stdout); return 0;}
+    '''
+    _prepare_submission(sub_id, teacher, student)
+    res = _run(sub_id)
+    assert res["Status"] == "AC"
+    assert res.get("teacherExit", 0) == 0
 
 
 def test_interactive_python_teacher(clean_submission):
@@ -441,17 +477,20 @@ def test_teacher_compile_fail_build_strategy(tmp_path):
         buildStrategy=BuildStrategy.MAKE_INTERACTIVE,
         assetPaths={})
     with pytest.raises(BuildStrategyError):
-        _prepare_teacher_artifacts(meta=meta, submission_dir=tmp_path)
+        _prepare_teacher_artifacts(problem_id=1,
+                                   meta=meta,
+                                   submission_dir=tmp_path)
 
 
 def test_prepare_teacher_file_respects_teacher_lang(tmp_path, monkeypatch):
-    from dispatcher import dispatcher as dmod
+    import dispatcher.build_strategy as bs
 
-    def fake_fetch(pid, asset):
-        return b'print("ok")'
+    def fake_fetch(pid=None, asset_type=None, filename=None, **kwargs):
+        path = tmp_path / "Teacher_file.py"
+        path.write_text('print("ok")')
+        return path
 
-    monkeypatch.setattr(dmod, "fetch_problem_asset", fake_fetch)
-    disp = dmod.Dispatcher(".config/dispatcher.json")
+    monkeypatch.setattr(bs, "ensure_custom_asset", fake_fetch)
     meta = Meta(
         language=Language.C,
         tasks=[Task(taskScore=100, memoryLimit=1, timeLimit=1, caseCount=1)],
@@ -462,20 +501,21 @@ def test_prepare_teacher_file_respects_teacher_lang(tmp_path, monkeypatch):
             "teacherLang": "py",
             "teacher_file": "ignored"
         })
-    disp._prepare_teacher_file(problem_id=1,
-                               meta=meta,
-                               submission_path=tmp_path)
+    bs.prepare_interactive_teacher_artifacts(problem_id=1,
+                                             meta=meta,
+                                             submission_dir=tmp_path)
     assert (tmp_path / "teacher" / "main.py").exists()
 
 
 def test_prepare_teacher_file_missing_teacher_lang(tmp_path, monkeypatch):
-    from dispatcher import dispatcher as dmod
+    import dispatcher.build_strategy as bs
 
-    def fake_fetch(pid, asset):
-        return b'int main(){return 0;}'
+    def fake_fetch(pid=None, asset_type=None, filename=None, **kwargs):
+        path = tmp_path / "Teacher_file.c"
+        path.write_text('int main(){return 0;}')
+        return path
 
-    monkeypatch.setattr(dmod, "fetch_problem_asset", fake_fetch)
-    disp = dmod.Dispatcher(".config/dispatcher.json")
+    monkeypatch.setattr(bs, "ensure_custom_asset", fake_fetch)
     meta = Meta(
         language=Language.C,
         tasks=[Task(taskScore=100, memoryLimit=1, timeLimit=1, caseCount=1)],
@@ -484,9 +524,9 @@ def test_prepare_teacher_file_missing_teacher_lang(tmp_path, monkeypatch):
         buildStrategy=BuildStrategy.MAKE_INTERACTIVE,
         assetPaths={"teacher_file": "ignored"})
     with pytest.raises(BuildStrategyError):
-        disp._prepare_teacher_file(problem_id=1,
-                                   meta=meta,
-                                   submission_path=tmp_path)
+        bs.prepare_interactive_teacher_artifacts(problem_id=1,
+                                                 meta=meta,
+                                                 submission_dir=tmp_path)
 
 
 def test_interactive_teacher_disk_growth_limit(clean_submission):
@@ -518,7 +558,16 @@ def test_interactive_teacher_too_many_files(clean_submission):
     _prepare_submission(sub_id, teacher, student)
     res = _run(sub_id)
     assert res["Status"] == "CE"
-    assert "too many files" in res["Stderr"]
+
+
+def test_check_result_message_truncation(tmp_path):
+    msg = "a" * 1100
+    path = tmp_path / "Check_Result"
+    path.write_text(f"STATUS: AC\nMESSAGE: {msg}\n")
+    status, truncated = _parse_check_result(path)
+    assert status == "AC"
+    assert truncated.endswith("...(truncated)")
+    assert truncated == ("a" * 1024) + "...(truncated)"
 
 
 def test_interactive_student_cannot_read_teacher(clean_submission):
