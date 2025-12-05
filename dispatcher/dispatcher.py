@@ -7,7 +7,6 @@ import pathlib
 import queue
 import textwrap
 import shutil
-import docker
 from datetime import datetime
 from runner.submission import SubmissionRunner
 from runner.interactive_runner import InteractiveRunner
@@ -38,7 +37,6 @@ class Dispatcher(threading.Thread):
     ):
         super().__init__()
         self.testing = False
-        self.daemon = True
         # read config
         queue_limit, container_limit = config.get_dispatcher_limits(
             dispatcher_config)
@@ -63,11 +61,13 @@ class Dispatcher(threading.Thread):
         self.timeout = 300
         self.created_at = {}
 
+        # [Network] init
         docker_url = s_config.get("docker_url", "unix://var/run/docker.sock")
         self.network_controller = NetworkController(
             docker_url=docker_url,
             submission_dir=self.SUBMISSION_DIR,
         )
+        # [Network] end
 
         # Build Strategy related
         self.prebuilt_submissions = set()
@@ -75,11 +75,12 @@ class Dispatcher(threading.Thread):
         self.build_plans = {}
         self.build_locks = {}
 
-        # Static Analysis related
+        # [Static Analysis] init
         self.sa_payloads = {}
-        self.sa_checked = set()
-
         self.submission_resources = {}
+        self.pending_tasks = {}
+        # [Static Analysis] end
+
 
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}
@@ -138,43 +139,18 @@ class Dispatcher(threading.Thread):
             else:
                 raise
 
-    # static analysis thread
-    def _handle_static_analysis(self, submission_id: str, problem_id: int,
-                                submission_config, submission_path):
-        try:
-            rules_json = fetch_problem_rules(problem_id)
-
-            is_zip_mode = (SubmissionMode(
-                submission_config.submissionMode) == SubmissionMode.ZIP)
-
-            success, payload, task_content = run_static_analysis(
-                submission_id=submission_id,
-                submission_path=submission_path,
-                meta=submission_config,
-                rules_json=rules_json,
-                is_zip_mode=is_zip_mode,
-            )
-
+    # [Static Analysis] If SA is failed, mark CE for all cases
+    def _handle_sa_failure(self, submission_id: str, payload: dict, task_content: dict):
+        logger().warning(f"Static analysis failed for {submission_id}, marking CE")
+        if self.contains(submission_id):
             if payload:
                 self.sa_payloads[submission_id] = payload
+            meta, _ = self.result[submission_id]
+            self.result[submission_id] = (meta, task_content)
 
-            if rules_json and not success:
-                logger().warning(
-                    f"Static analysis failed for {submission_id}, marking CE")
-                if self.contains(submission_id):
-                    self.result[submission_id] = (
-                        submission_config,
-                        task_content or build_sa_ce_task_content(
-                            submission_config, "Static Analysis Not Passed"),
-                    )
-                    self.on_submission_complete(submission_id)
-                else:
-                    logger().debug(
-                        f"Static analysis passed for {submission_id}")
-        except Exception as e:
-            logger().error(
-                f"Error during static analysis for {submission_id}: {e}",
-                exc_info=True)
+            # END all cases with CE
+            self.on_submission_complete(submission_id)
+    # [Static Analysis] end
 
     # Helper methods for Build Strategy
     def _is_prebuilt_submission(self, submission_id: str) -> bool:
@@ -182,6 +158,11 @@ class Dispatcher(threading.Thread):
 
     def _is_build_pending(self, submission_id: str) -> bool:
         return submission_id in self.build_plans
+
+    # [Static Analysis] To check SA is done or not
+    def _is_sa_pending(self, submission_id: str) -> bool:
+        return submission_id in self.pending_tasks
+    # [Static Analysis] end
 
     def _clear_submission_jobs(self, submission_id: str):
         pending = []
@@ -264,6 +245,7 @@ class Dispatcher(threading.Thread):
         with (submission_path / "meta.json").open() as f:
             submission_config = Meta.parse_obj(json.load(f))
 
+        # [Network] Setup Sidecar & Router
         # Network Config Fetching & Check configuration
         network_config = fetch_problem_network_config(problem_id)
         external_config = network_config.get("external", {}) or {}
@@ -333,6 +315,8 @@ class Dispatcher(threading.Thread):
                 )
                 self.on_submission_complete(submission_id)
                 return
+        # [Network] end
+
         # [Result Init]
         task_content = {}
         self.result[submission_id] = (submission_config, task_content)
@@ -362,12 +346,17 @@ class Dispatcher(threading.Thread):
             self.on_submission_complete(submission_id)
             return
 
+        # [Static Analysis] init array for pending work
+        tasks_to_run = []
+
         needs_build = build_plan.needs_make
         if needs_build:
-            logger().debug(f"[build] submission={submission_id} queued")
+            # Wait for SA before building
+            logger().debug(f"[build] submission={submission_id} planned to build, waiting for SA")
             self.build_plans[submission_id] = build_plan
             self.build_locks[submission_id] = threading.Lock()
-            self.queue.put_nowait(job.Build(submission_id=submission_id))
+            tasks_to_run.append(job.Build(submission_id=submission_id))
+
         else:
             if build_plan.finalize:
                 build_plan.finalize()
@@ -376,26 +365,32 @@ class Dispatcher(threading.Thread):
                     f"[build] submission={submission_id} marked prebuilt")
                 self.prebuilt_submissions.add(submission_id)
 
-        # [Job Dispatching]
-        try:
-            if (not needs_build
-                    and not self._is_prebuilt_submission(submission_id)
-                    and self.compile_need(submission_config.language)):
-                self.queue.put_nowait(job.Compile(submission_id=submission_id))
 
-            for i, task in enumerate(submission_config.tasks):
-                for j in range(task.caseCount):
-                    case_no = f"{i:02d}{j:02d}"
-                    task_content[case_no] = None
-                    _job = job.Execute(
-                        submission_id=submission_id,
-                        task_id=i,
-                        case_id=j,
-                    )
-                    self.queue.put_nowait(_job)
+        # Prepare pending tasks
+        # [Job Dispatching]
+        if (not needs_build
+                and not self._is_prebuilt_submission(submission_id)
+                and self.compile_need(submission_config.language)):
+            tasks_to_run.append(job.Compile(submission_id=submission_id))
+
+        for i, task in enumerate(submission_config.tasks):
+            for j in range(task.caseCount):
+                case_no = f"{i:02d}{j:02d}"
+                task_content[case_no] = None
+                tasks_to_run.append(job.Execute(
+                    submission_id=submission_id,
+                    task_id=i,
+                    case_id=j,
+                ))
+
+        self.pending_tasks[submission_id] = tasks_to_run
+
+        try:
+            self.queue.put_nowait(job.StaticAnalysis(submission_id=submission_id))
         except queue.Full as e:
             self.release(submission_id)
             raise e
+        # [Static Analysis] end
 
     def release(self, submission_id: str):
         for v in (
@@ -407,17 +402,19 @@ class Dispatcher(threading.Thread):
         ):
             if submission_id in v:
                 del v[submission_id]
-
-        self.sa_checked.discard(submission_id)
+        # [Static Analysis] Cleanup
         self.sa_payloads.pop(submission_id, None)
+        self.pending_tasks.pop(submission_id, None)
+        # [Static Analysis] end
 
         self.prebuilt_submissions.discard(submission_id)
         self.build_strategies.pop(submission_id, None)
         self.build_plans.pop(submission_id, None)
         self.build_locks.pop(submission_id, None)
-        # Sidecar Cleanup
+        
+        # [Network] Cleanup
         self.network_controller.cleanup(submission_id)
-
+        # [Network] end
     def run(self):
         self.do_run = True
         logger().debug("start dispatcher loop")
@@ -449,23 +446,53 @@ class Dispatcher(threading.Thread):
             problem_id = (submission_config.problem_id if hasattr(
                 submission_config, "problem_id") else 1)
 
-            # [Static Analysis]
-            if submission_id not in self.sa_checked:
-                self.sa_checked.add(submission_id)
+            # [Static Analysis] Handle Static Analysis Job
+            if isinstance(_job, job.StaticAnalysis):
+                logger().info(f"Running Static Analysis for {submission_id}")
                 submission_path = self.SUBMISSION_DIR / submission_id
-                threading.Thread(
-                    target=self._handle_static_analysis,
-                    args=(
-                        submission_id,
-                        problem_id,
+                
+                try:
+                    rules_json = fetch_problem_rules(problem_id)
+                    is_zip_mode = (SubmissionMode(submission_config.submissionMode)
+                                   == SubmissionMode.ZIP)
+                    
+                    # do SA
+                    success, payload , task_content = run_static_analysis(
+                        submission_id=submission_id,
+                        submission_path=submission_path,
+                        mate=submission_config,
+                        rules_json=rules_json,
+                        is_zip_mode=is_zip_mode,
+                    )
+                    if payload:
+                        self.sa_payloads[submission_id] = payload
+                    if success:
+                        logger().info(f"Static Analysis succeeded for {submission_id}.  Releasing pending jobs.")
+                        pending_jobs = self.pending_tasks.pop(submission_id, [])
+                        for pj in pending_jobs:
+                            self.queue.put(pj)
+                    else:
+                        logger().info(f"Static Analysis failed for {submission_id}. Marking CE for all cases.")
+                        self._handle_sa_failure(
+                            submission_id=submission_id,
+                            payload=payload,
+                            task_content=task_content,
+                        )
+                except Exception as e:
+                    logger().error(f"Error in SA job for {submission_id}: {e}",exc_info=True)
+                    msg = f"Static Analysis Exception: {e}"
+                    fail_content = build_sa_ce_task_content(
                         submission_config,
-                        submission_path,
-                    ),
-                    daemon=True,
-                ).start()
+                        msg,
+                    )
+                    self._handle_sa_failure(submission_id, {"status": "sys_err", "message": msg}, fail_content)
+                
+                continue
+            # [Static Analysis] end
 
-            # [Sidecar] Determine Network Mode
+            # [Network] Determine Network Mode
             net_mode = self.network_controller.get_network_mode(submission_id)
+            # [Network] end
 
             # 1. Build Job
             if isinstance(_job, job.Build):
@@ -786,10 +813,6 @@ class Dispatcher(threading.Thread):
             raise SubmissionIdNotFoundError(
                 f"Unexisted id {submission_id} recieved")
 
-        # for debugging
-        logger().info(f"[{submission_id}/{case_no}] STDOUT:\n{stdout}")
-        logger().info(f"[{submission_id}/{case_no}] STDERR:\n{stderr}")
-        # ----------------
         _, results = self.result[submission_id]
         if case_no not in results:
             raise ValueError(f"Unexisted case {case_no} recieved")
