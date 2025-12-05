@@ -38,17 +38,20 @@ def extract(
         _extract_zip_source(common_dir, source, int(meta.language))
     else:
         _extract_code_source(common_dir, source, int(meta.language))
-    # copy testdata
+    # copy testdata (exclude checker, resource_data*, chaos subdirectories)
     testcase_dir = submission_dir / 'testcase'
-    shutil.copytree(testdata, testcase_dir)
-    # move chaos files to src directory
-    chaos_dir = testcase_dir / 'chaos'
+    shutil.copytree(
+        testdata,
+        testcase_dir,
+        ignore=shutil.ignore_patterns('checker', 'resource_data*', 'chaos'),
+    )
+    # move chaos files to src directory (from original testdata, not copied)
+    chaos_dir = testdata / 'chaos'
     if chaos_dir.exists():
         if chaos_dir.is_file():
             raise ValueError('\'chaos\' can not be a file')
         for chaos_file in chaos_dir.iterdir():
-            shutil.move(str(chaos_file), str(common_dir))
-        os.rmdir(chaos_dir)
+            shutil.copy(str(chaos_file), str(common_dir))
 
 
 def _extract_code_source(code_dir: Path, source, language_id: int):

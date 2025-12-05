@@ -53,13 +53,12 @@ class ArtifactCollector:
         buf = io.BytesIO()
         total_size = 0
         with ZipFile(buf, "w") as zf:
-            # stdout/stderr (only write when non-empty)
-            if stdout:
-                zf.writestr("stdout", stdout)
-                total_size += len(stdout.encode("utf-8", "ignore"))
-            if stderr:
-                zf.writestr("stderr", stderr)
-                total_size += len(stderr.encode("utf-8", "ignore"))
+            # stdout/stderr - always write to preserve data from sandbox result
+            # even if empty, to maintain consistency with backend expectations
+            zf.writestr("stdout", stdout or "")
+            total_size += len((stdout or "").encode("utf-8", "ignore"))
+            zf.writestr("stderr", stderr or "")
+            total_size += len((stderr or "").encode("utf-8", "ignore"))
             # extra files
             for rel_path in changed:
                 fpath = workdir / rel_path

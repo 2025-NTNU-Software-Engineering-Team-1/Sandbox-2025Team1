@@ -33,6 +33,8 @@ from .resource_data import (
     prepare_resource_data,
     prepare_teacher_resource_data,
     copy_resource_for_case,
+    copy_teacher_resource_for_case,
+    prepare_teacher_for_case,
 )
 
 
@@ -887,13 +889,15 @@ class Dispatcher(threading.Thread):
         teacher_first: bool = False,
     ):
         lang_key = ["c11", "cpp17", "python3"][int(lang)]
+        submission_path = self.SUBMISSION_DIR / submission_id
         meta_obj, _ = self.result.get(submission_id, (None, None))
         collect_artifacts = meta_obj and ArtifactCollector.should_collect_artifacts(
             meta_obj)
         common_dir = self._common_dir(submission_id)
         case_dir = self._case_dir(submission_id, case_no)
-        teacher_res_dir = self.teacher_resource_dirs.get(submission_id)
         # prepare per-case workdir: clean and copy common + resources
+        SANDBOX_UID = 1450
+        SANDBOX_GID = 1450
         try:
             if case_dir.exists():
                 shutil.rmtree(case_dir)
@@ -903,6 +907,21 @@ class Dispatcher(threading.Thread):
                                 case_dir,
                                 dirs_exist_ok=True,
                                 ignore=shutil.ignore_patterns("cases"))
+            # Set permissions for sandbox user to write if allowWrite is enabled
+            allow_write_val = bool(getattr(meta_obj, "allowWrite", False))
+            if allow_write_val:
+                import os
+                os.chown(case_dir, SANDBOX_UID, SANDBOX_GID)
+                os.chmod(case_dir, 0o755)
+                for item in case_dir.rglob("*"):
+                    try:
+                        os.chown(item, SANDBOX_UID, SANDBOX_GID)
+                        if item.is_dir():
+                            os.chmod(item, 0o755)
+                        else:
+                            os.chmod(item, 0o644)
+                    except Exception:
+                        pass
         except Exception as exc:
             logger().warning(
                 "prepare case dir failed [id=%s case=%s]: %s",
@@ -944,26 +963,24 @@ class Dispatcher(threading.Thread):
                     prob_status=res["Status"],
                 )
             return
-        # copy resource files for this case
-        res_dir = self.resource_dirs.get(submission_id)
+        # copy resource files for this case (function checks if resource_data/ exists)
         copied_resources = None
         copy_error = None
-        if res_dir:
-            try:
-                copied_resources = copy_resource_for_case(
-                    resource_dir=res_dir,
-                    src_dir=case_dir,
-                    task_no=int(case_no[:2]),
-                    case_no=int(case_no[2:]),
-                )
-            except Exception as exc:
-                copy_error = exc
-                logger().warning(
-                    "resource copy failed [id=%s case=%s]: %s",
-                    submission_id,
-                    case_no,
-                    exc,
-                )
+        try:
+            copied_resources = copy_resource_for_case(
+                submission_path=submission_path,
+                case_dir=case_dir,
+                task_no=int(case_no[:2]),
+                case_no=int(case_no[2:]),
+            )
+        except Exception as exc:
+            copy_error = exc
+            logger().warning(
+                "resource copy failed [id=%s case=%s]: %s",
+                submission_id,
+                case_no,
+                exc,
+            )
         if copy_error:
             res = {
                 "Status": "JE",
@@ -1035,6 +1052,15 @@ class Dispatcher(threading.Thread):
             if self.compile_need(lang) and compile_res.get("Status") == "CE":
                 res = compile_res
             else:
+                # Prepare teacher case directory with testcase and resources
+                teacher_common_dir = submission_path / "teacher" / "common"
+                teacher_case_dir = prepare_teacher_for_case(
+                    submission_path=submission_path,
+                    task_no=int(case_no[:2]),
+                    case_no=int(case_no[2:]),
+                    teacher_common_dir=teacher_common_dir,
+                    copy_testcase=True,
+                )
                 runner = InteractiveRunner(
                     submission_id=submission_id,
                     time_limit=time_limit,
@@ -1045,6 +1071,7 @@ class Dispatcher(threading.Thread):
                     teacher_lang_key=teacher_lang_key,
                     case_dir=case_dir,
                     student_allow_write=student_allow_write,
+                    teacher_case_dir=teacher_case_dir,
                 )
                 try:
                     self.inc_container()
@@ -1114,6 +1141,16 @@ class Dispatcher(threading.Thread):
                         case_out_path.replace(str(self.SUBMISSION_DIR),
                                               str(self.SUBMISSION_DIR)))
 
+                    # Prepare teacher case directory for custom checker
+                    # No teacher_common_dir for custom checker (no interactive teacher)
+                    teacher_case_dir = prepare_teacher_for_case(
+                        submission_path=submission_path,
+                        task_no=int(case_no[:2]),
+                        case_no=int(case_no[2:]),
+                        teacher_common_dir=None,
+                        copy_testcase=
+                        False,  # custom checker reads from case_in_path
+                    )
                     checker_result = run_custom_checker_case(
                         submission_id=submission_id,
                         case_no=case_no,
@@ -1126,7 +1163,7 @@ class Dispatcher(threading.Thread):
                         image=self.custom_checker_image,
                         docker_url=runner.docker_url,
                         student_workdir=case_dir,
-                        teacher_dir=teacher_res_dir,
+                        teacher_dir=teacher_case_dir,
                     )
                     res["Status"] = checker_result["status"]
                     message = checker_result.get("message", "")

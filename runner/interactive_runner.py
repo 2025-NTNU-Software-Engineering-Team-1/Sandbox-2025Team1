@@ -22,6 +22,7 @@ class InteractiveRunner:
     pipe_mode: str = "auto"
     case_dir: Path | None = None
     student_allow_write: bool = False
+    teacher_case_dir: Path | None = None  # teacher/cases/{case_id}/ directory
 
     def run(self) -> dict:
         translator = PathTranslator()
@@ -32,23 +33,29 @@ class InteractiveRunner:
 
         submission_root = translator.working_dir / self.submission_id
         host_root = translator.host_root
-        teacher_dir = submission_root / "teacher"
         if self.case_dir is None:
             raise ValueError("case_dir is required for interactive run")
         student_dir = self.case_dir
         if not student_dir.exists():
             raise ValueError(f"interactive case_dir missing: {student_dir}")
-        testcase_dir = submission_root / "testcase"
+        # Use teacher_case_dir (teacher/cases/{case_id}/) instead of teacher/
+        if self.teacher_case_dir is None:
+            raise ValueError(
+                "teacher_case_dir is required for interactive run")
+        teacher_dir = self.teacher_case_dir
+        if not teacher_dir.exists():
+            raise ValueError(
+                f"interactive teacher_case_dir missing: {teacher_dir}")
         submission_root_host = translator.to_host(submission_root)
         teacher_dir_host = translator.to_host(teacher_dir)
         student_dir_host = translator.to_host(student_dir)
-        testcase_dir_host = translator.to_host(testcase_dir)
         if self.teacher_lang_key is None:
             raise ValueError(
                 "teacher_lang_key is required for interactive mode")
         teacher_lang_key = self.teacher_lang_key
 
         client = docker.APIClient(base_url=docker_url)
+        # No longer mount testcase/ separately - testcase.in is in teacher_case_dir
         binds = {
             str(student_dir_host): {
                 "bind": "/src",
@@ -57,10 +64,6 @@ class InteractiveRunner:
             str(teacher_dir_host): {
                 "bind": "/teacher",
                 "mode": "rw"
-            },
-            str(testcase_dir_host): {
-                "bind": "/workspace/testcase",
-                "mode": "ro"
             },
             str(host_root): {
                 "bind": "/app",
@@ -73,8 +76,8 @@ class InteractiveRunner:
             mem_limit=f"{max(self.mem_limit,0)}k",
             tmpfs={"/tmp": "rw,noexec,nosuid"},
         )
-        case_path_container = str(
-            Path("/workspace/testcase") / Path(self.case_in_path).name)
+        # testcase.in is now in teacher_case_dir, mounted at /teacher
+        case_path_container = "/teacher/testcase.in"
 
         command = [
             "/usr/bin/env",

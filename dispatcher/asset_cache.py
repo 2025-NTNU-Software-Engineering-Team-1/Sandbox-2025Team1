@@ -1,6 +1,7 @@
 import hashlib
 import secrets
 import shutil
+import zipfile
 from pathlib import Path
 from typing import Optional
 
@@ -124,3 +125,85 @@ def ensure_custom_asset(
         checksum_to_store = backend_checksum or _md5_bytes(data)
         client.setex(redis_key, 600, checksum_to_store)
         return asset_path
+
+
+def ensure_extracted_resource(
+    problem_id: int,
+    asset_type: str,
+) -> Optional[Path]:
+    """
+    Ensure resource zip is extracted to extracted/ directory.
+    
+    Uses Redis lock to prevent concurrent extraction.
+    Returns extracted/ directory path, or None if asset not configured.
+    
+    asset_type: "resource_data" | "resource_data_teacher"
+    """
+    if asset_type not in ("resource_data", "resource_data_teacher"):
+        raise ValueError(f"invalid asset_type for extraction: {asset_type}")
+
+    # First ensure the zip file is up-to-date
+    try:
+        zip_path = ensure_custom_asset(problem_id, asset_type)
+    except AssetNotFoundError:
+        logger().debug(
+            "asset not configured, skip extraction [problem_id=%s, asset_type=%s]",
+            problem_id,
+            asset_type,
+        )
+        return None
+
+    client = get_redis_client()
+    extracted_key = f"problem-{problem_id}-{asset_type}-extracted"
+    lock_key = f"{extracted_key}-lock"
+
+    cache_dir = TESTDATA_ROOT / str(problem_id) / asset_type
+    extracted_dir = cache_dir / "extracted"
+
+    with client.lock(lock_key, timeout=60):
+        # Get zip checksum to compare with extracted state
+        zip_checksum = _md5_bytes(zip_path.read_bytes())
+
+        # Check if already extracted with same checksum
+        cached_extracted = client.get(extracted_key)
+        if cached_extracted:
+            cached_extracted = cached_extracted.decode()
+            if (secrets.compare_digest(cached_extracted, zip_checksum)
+                    and extracted_dir.exists()
+                    and any(extracted_dir.iterdir())):
+                # Already extracted, refresh TTL
+                client.setex(extracted_key, 600, zip_checksum)
+                logger().debug(
+                    "extracted cache hit [problem_id=%s, asset_type=%s]",
+                    problem_id,
+                    asset_type,
+                )
+                return extracted_dir
+
+        # Need to extract
+        logger().info(
+            "extracting resource [problem_id=%s, asset_type=%s]",
+            problem_id,
+            asset_type,
+        )
+
+        # Clean and recreate extracted directory
+        if extracted_dir.exists():
+            shutil.rmtree(extracted_dir)
+        extracted_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            with zipfile.ZipFile(zip_path) as zf:
+                zf.extractall(extracted_dir)
+        except Exception as exc:
+            logger().error(
+                "failed to extract resource [problem_id=%s, asset_type=%s]: %s",
+                problem_id,
+                asset_type,
+                exc,
+            )
+            return None
+
+        # Store extraction state
+        client.setex(extracted_key, 600, zip_checksum)
+        return extracted_dir

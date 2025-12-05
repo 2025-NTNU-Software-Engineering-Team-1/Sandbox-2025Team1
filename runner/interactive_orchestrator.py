@@ -391,23 +391,18 @@ def orchestrate(args: argparse.Namespace):
     env_teacher["SANDBOX_GID"] = str(sandbox_gid)
     # only teacher可寫檔
     env_teacher["SANDBOX_ALLOW_WRITE"] = "1"
-    case_local = None
+    # testcase.in is pre-copied to teacher_dir by Dispatcher
+    # Set CASE_PATH environment variable for sandbox
     if args.case_path:
         env_teacher["CASE_PATH"] = args.case_path
-        src_case = Path(args.case_path)
-        if src_case.exists():
-            case_local = teacher_dir / "testcase.in"
-            try:
-                if case_local.exists():
-                    case_local.unlink()
-                case_local.write_bytes(src_case.read_bytes())
-                os.chmod(case_local, 0o600)
-                try:
-                    os.chown(case_local, teacher_uid, sandbox_gid)
-                except Exception:
-                    pass
-            except Exception:
-                case_local = None
+    # Ensure proper permissions on testcase.in in teacher directory
+    testcase_in = teacher_dir / "testcase.in"
+    if testcase_in.exists():
+        try:
+            os.chmod(testcase_in, 0o600)
+            os.chown(testcase_in, teacher_uid, sandbox_gid)
+        except Exception:
+            pass
     start_time = time.time()
     procs = {}
     try:
@@ -512,19 +507,7 @@ def orchestrate(args: argparse.Namespace):
                 os.close(fd)
             except Exception:
                 pass
-        if case_local and case_local.exists():
-            try:
-                case_local.unlink()
-            except Exception:
-                try:
-                    os.chmod(case_local, 0o600)
-                    case_local.unlink()
-                except Exception as exc:
-                    logging.getLogger(__name__).warning(
-                        "failed to remove testcase file %s: %s",
-                        case_local,
-                        exc,
-                    )
+        # testcase.in cleanup is handled by Dispatcher (teacher_case_dir cleanup)
 
     teacher_result = _read_result(tmpdir / "teacher.result")
     student_result = _read_result(stu_res)

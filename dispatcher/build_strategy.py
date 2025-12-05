@@ -252,9 +252,11 @@ def _prepare_teacher_artifacts(meta: Meta,
         meta, "assetPaths", None) else None
     if not teacher_path:
         raise BuildStrategyError("interactive mode requires Teacher_file")
-    teacher_dir = submission_dir / "teacher"
-    if teacher_dir.exists():
-        shutil.rmtree(teacher_dir)
+    # Use teacher/common for compiled teacher artifacts
+    teacher_dir = submission_dir / "teacher" / "common"
+    parent_dir = submission_dir / "teacher"
+    if parent_dir.exists():
+        shutil.rmtree(parent_dir)
     teacher_dir.mkdir(parents=True, exist_ok=True)
     teacher_filename = Path(teacher_path).name
     try:
