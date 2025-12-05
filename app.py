@@ -23,6 +23,9 @@ if __name__ != "__main__":
     app.logger.handlers = gunicorn_logger.handlers
     app.logger.setLevel(gunicorn_logger.level)
     logging.getLogger().setLevel(gunicorn_logger.level)
+
+    app.logger.setLevel(logging.DEBUG)
+    logging.getLogger().setLevel(logging.DEBUG)
 logger = app.logger
 
 # setup dispatcher

@@ -81,7 +81,6 @@ class Dispatcher(threading.Thread):
         self.pending_tasks = {}
         # [Static Analysis] end
 
-
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}
 
@@ -109,8 +108,9 @@ class Dispatcher(threading.Thread):
     def is_timed_out(self, submission_id: str):
         if not self.contains(submission_id):
             return False
-        delta = (datetime.now() - self.created_at[submission_id]).seconds
-        return delta > self.timeout
+        delta = datetime.now() - self.created_at[submission_id]
+        # valid minus seconds
+        return delta.total_seconds() > self.timeout
 
     def prepare_submission_dir(
         self,
@@ -140,8 +140,10 @@ class Dispatcher(threading.Thread):
                 raise
 
     # [Static Analysis] If SA is failed, mark CE for all cases
-    def _handle_sa_failure(self, submission_id: str, payload: dict, task_content: dict):
-        logger().warning(f"Static analysis failed for {submission_id}, marking CE")
+    def _handle_sa_failure(self, submission_id: str, payload: dict,
+                           task_content: dict):
+        logger().warning(
+            f"Static analysis failed for {submission_id}, marking CE")
         if self.contains(submission_id):
             if payload:
                 self.sa_payloads[submission_id] = payload
@@ -150,6 +152,7 @@ class Dispatcher(threading.Thread):
 
             # END all cases with CE
             self.on_submission_complete(submission_id)
+
     # [Static Analysis] end
 
     # Helper methods for Build Strategy
@@ -162,6 +165,7 @@ class Dispatcher(threading.Thread):
     # [Static Analysis] To check SA is done or not
     def _is_sa_pending(self, submission_id: str) -> bool:
         return submission_id in self.pending_tasks
+
     # [Static Analysis] end
 
     def _clear_submission_jobs(self, submission_id: str):
@@ -245,13 +249,19 @@ class Dispatcher(threading.Thread):
         with (submission_path / "meta.json").open() as f:
             submission_config = Meta.parse_obj(json.load(f))
 
+        # [Static Analysis] Fetch Static Analysis Rules
+        rules_json = fetch_problem_rules(problem_id)
+        logger().debug(f"fetched static analysis rules: {rules_json}")
+        # [Static Analysis] end
         # [Network] Setup Sidecar & Router
         # Network Config Fetching & Check configuration
         network_config = fetch_problem_network_config(problem_id)
         external_config = network_config.get("external", {}) or {}
         sidecars_config = network_config.get("sidecars") or []
         router_id = None
-
+        logger().debug(f"fetched network config MAX: {network_config}")
+        logger().debug(f"sidecars config: {sidecars_config}")
+        logger().debug(f"external config: {external_config}")
         # check sidecar image pull
         if sidecars_config:
             try:
@@ -352,7 +362,9 @@ class Dispatcher(threading.Thread):
         needs_build = build_plan.needs_make
         if needs_build:
             # Wait for SA before building
-            logger().debug(f"[build] submission={submission_id} planned to build, waiting for SA")
+            logger().debug(
+                f"[build] submission={submission_id} planned to build, waiting for SA"
+            )
             self.build_plans[submission_id] = build_plan
             self.build_locks[submission_id] = threading.Lock()
             tasks_to_run.append(job.Build(submission_id=submission_id))
@@ -365,11 +377,9 @@ class Dispatcher(threading.Thread):
                     f"[build] submission={submission_id} marked prebuilt")
                 self.prebuilt_submissions.add(submission_id)
 
-
         # Prepare pending tasks
         # [Job Dispatching]
-        if (not needs_build
-                and not self._is_prebuilt_submission(submission_id)
+        if (not needs_build and not self._is_prebuilt_submission(submission_id)
                 and self.compile_need(submission_config.language)):
             tasks_to_run.append(job.Compile(submission_id=submission_id))
 
@@ -377,16 +387,18 @@ class Dispatcher(threading.Thread):
             for j in range(task.caseCount):
                 case_no = f"{i:02d}{j:02d}"
                 task_content[case_no] = None
-                tasks_to_run.append(job.Execute(
-                    submission_id=submission_id,
-                    task_id=i,
-                    case_id=j,
-                ))
+                tasks_to_run.append(
+                    job.Execute(
+                        submission_id=submission_id,
+                        task_id=i,
+                        case_id=j,
+                    ))
 
         self.pending_tasks[submission_id] = tasks_to_run
 
         try:
-            self.queue.put_nowait(job.StaticAnalysis(submission_id=submission_id))
+            self.queue.put_nowait(
+                job.StaticAnalysis(submission_id=submission_id))
         except queue.Full as e:
             self.release(submission_id)
             raise e
@@ -411,10 +423,11 @@ class Dispatcher(threading.Thread):
         self.build_strategies.pop(submission_id, None)
         self.build_plans.pop(submission_id, None)
         self.build_locks.pop(submission_id, None)
-        
+
         # [Network] Cleanup
         self.network_controller.cleanup(submission_id)
         # [Network] end
+
     def run(self):
         self.do_run = True
         logger().debug("start dispatcher loop")
@@ -450,43 +463,59 @@ class Dispatcher(threading.Thread):
             if isinstance(_job, job.StaticAnalysis):
                 logger().info(f"Running Static Analysis for {submission_id}")
                 submission_path = self.SUBMISSION_DIR / submission_id
-                
+
                 try:
                     rules_json = fetch_problem_rules(problem_id)
-                    is_zip_mode = (SubmissionMode(submission_config.submissionMode)
-                                   == SubmissionMode.ZIP)
-                    
+                    logger().debug(
+                        f"fetched static analysis rules: {rules_json}")
+                    is_zip_mode = (SubmissionMode(
+                        submission_config.submissionMode) == SubmissionMode.ZIP
+                                   )
+
                     # do SA
-                    success, payload , task_content = run_static_analysis(
+                    success, payload, task_content = run_static_analysis(
                         submission_id=submission_id,
                         submission_path=submission_path,
-                        mate=submission_config,
+                        meta=submission_config,
                         rules_json=rules_json,
                         is_zip_mode=is_zip_mode,
                     )
                     if payload:
                         self.sa_payloads[submission_id] = payload
                     if success:
-                        logger().info(f"Static Analysis succeeded for {submission_id}.  Releasing pending jobs.")
-                        pending_jobs = self.pending_tasks.pop(submission_id, [])
+                        logger().info(
+                            f"Static Analysis succeeded for {submission_id}.  Releasing pending jobs."
+                        )
+                        pending_jobs = self.pending_tasks.pop(
+                            submission_id, [])
                         for pj in pending_jobs:
                             self.queue.put(pj)
                     else:
-                        logger().info(f"Static Analysis failed for {submission_id}. Marking CE for all cases.")
+                        logger().info(
+                            f"Static Analysis failed for {submission_id}. Marking CE for all cases."
+                        )
                         self._handle_sa_failure(
                             submission_id=submission_id,
                             payload=payload,
                             task_content=task_content,
                         )
                 except Exception as e:
-                    logger().error(f"Error in SA job for {submission_id}: {e}",exc_info=True)
+                    logger().error(f"Error in SA job for {submission_id}: {e}",
+                                   exc_info=True)
                     msg = f"Static Analysis Exception: {e}"
                     fail_content = build_sa_ce_task_content(
                         submission_config,
                         msg,
                     )
-                    self._handle_sa_failure(submission_id, {"status": "sys_err", "message": msg}, fail_content)
-                
+                    self._handle_sa_failure(
+                        submission_id,
+                        {
+                            "status": "sys_err",
+                            "message": msg
+                        },
+                        fail_content,
+                    )
+
                 continue
             # [Static Analysis] end
 

@@ -36,6 +36,7 @@ class Sandbox:
         compile_need: bool,
         stdin_path: Optional[str] = None,
         network_mode: str = "none",
+        allow_write: bool = False,
     ):
         with open(".config/submission.json") as f:
             config = json.load(f)
@@ -46,12 +47,17 @@ class Sandbox:
         self.stdin_path = stdin_path
         self.lang_id = lang_id
         self.compile_need = compile_need
-        self.client = docker.APIClient(base_url=config["docker_url"])
+        self.allow_write = allow_write
         self.network_mode = network_mode
+        self.client = docker.APIClient(base_url=config["docker_url"])
 
     def run(self):
         # docker container settings
         stdin_path = "/dev/null" if not self.stdin_path else "/testdata/in"
+        if self.network_mode != "none":
+            allow_network_access = 1
+        else:
+            allow_network_access = 0
         command_sandbox = " ".join(
             map(
                 str,
@@ -67,12 +73,13 @@ class Sandbox:
                     "1",
                     "1073741824",  # 1 GB output limit
                     "10",  # 10 process
+                    allow_network_access,
                     "/result/result",
                 ),
             ))
 
         # Bind mounts set
-        binds = {
+        volume = {
             self.src_dir: {
                 "bind": "/src",
                 "mode": "rw"
@@ -89,19 +96,28 @@ class Sandbox:
         net_mode_arg = None if is_net_disabled else self.network_mode
 
         host_config = self.client.create_host_config(
-            binds=binds,
+            binds={
+                self.src_dir: {
+                    "bind": "/src",
+                    "mode": "rw"
+                },
+                self.stdin_path: {
+                    "bind": "/testdata/in",
+                    "mode": "ro"
+                },
+            },
             network_mode=net_mode_arg,
         )
 
-        # volume settings
-        container_volumes = [v["bind"] for v in binds.values()]
         container = self.client.create_container(
             image=self.image,
             command=command_sandbox,
-            volumes=container_volumes,
+            volumes=volume,
             network_disabled=is_net_disabled,
             working_dir=container_working_dir,
             host_config=host_config,
+            environment={"SANDBOX_ALLOW_WRITE": "1"}
+            if self.allow_write else None,
         )
 
         if container.get("Warning"):

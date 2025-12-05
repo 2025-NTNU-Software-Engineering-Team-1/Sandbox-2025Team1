@@ -20,19 +20,25 @@ class SubmissionRunner:
         special_judge: bool = False,
         lang: Optional[str] = None,
         network_mode: str = "none",
+        common_dir: Optional[str] = None,
+        case_dir: Optional[str] = None,
+        allow_write: bool = False,
     ):
         # config file
         translator = PathTranslator()
         submission_cfg = translator.cfg
         self.lang = lang
         self.special_judge = special_judge
-        self.network_mode = network_mode
+
         # required
         self.submission_id = submission_id
         self.time_limit = time_limit
         self.mem_limit = mem_limit
         self.testdata_input_path = testdata_input_path  # absoulte path str
         self.testdata_output_path = testdata_output_path  # absoulte path str
+        self.common_dir = pathlib.Path(common_dir) if common_dir else None
+        self.case_dir = pathlib.Path(case_dir) if case_dir else None
+        self.allow_write = allow_write
         # working_dir
         self.working_dir = str(translator.working_dir)
         self.docker_url = submission_cfg.get("docker_url",
@@ -41,6 +47,10 @@ class SubmissionRunner:
         # for language specified settings
         self.lang_id = submission_cfg["lang_id"]
         self.image = submission_cfg["image"]
+
+        # [Network] settings
+        self.network_mode = network_mode
+        # [Network] end
 
     def compile(self):
         try:
@@ -52,6 +62,7 @@ class SubmissionRunner:
                 src_dir=str(self.translator.to_host(self._src_dir())),
                 lang_id=self.lang_id[self.lang],
                 compile_need=True,
+                allow_write=False,
             ).run()
         except JudgeError:
             return {"Status": "JE"}
@@ -79,6 +90,7 @@ class SubmissionRunner:
                 src_dir=str(src_dir_host),
                 lang_id=cfg["lang_id"][lang],
                 compile_need=True,
+                allow_write=False,
             ).run()
         except JudgeError:
             return {"Status": "JE"}
@@ -126,6 +138,7 @@ class SubmissionRunner:
                 compile_need=False,
                 stdin_path=str(
                     self.translator.to_host(self.testdata_input_path)),
+                allow_write=self.allow_write,
                 network_mode=self.network_mode,
             ).run()
         except JudgeError:
@@ -185,8 +198,21 @@ class SubmissionRunner:
         }
 
     def _src_dir(self) -> str:
-        return str((pathlib.Path(self.working_dir) / self.submission_id /
-                    "src").resolve())
+        base = pathlib.Path(self.working_dir) / self.submission_id / "src"
+        common = base / "common"
+        if self.common_dir:
+            return str(self.common_dir)
+        return str(common)
+
+    def _compile_src_dir(self) -> str:
+        """Source directory used for compile/build steps (common)."""
+        return str(pathlib.Path(self._src_dir()))
+
+    def _run_src_dir(self) -> str:
+        """Runtime workdir; defaults to case_dir if provided."""
+        if self.case_dir:
+            return str(self.case_dir)
+        return self._compile_src_dir()
 
     @classmethod
     def strip(cls, s: str) -> list:

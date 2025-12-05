@@ -9,12 +9,6 @@ from .config import (
     TESTDATA_ROOT,
 )
 
-RULES_DIR = TESTDATA_ROOT / "rules"
-RULES_DIR.mkdir(exist_ok=True, parents=True)
-
-NETWORK_DIR = TESTDATA_ROOT / "network"
-NETWORK_DIR.mkdir(exist_ok=True)
-
 
 def handle_problem_response(resp: rq.Response):
     if resp.status_code == 404:
@@ -31,14 +25,7 @@ def fetch_problem_rules(problem_id: int) -> dict:
     """
     Fetch static analysis rules.json from backend server
     """
-    # for local debug
-    rule_path = RULES_DIR / f"{problem_id}.json"
-    if rule_path.exists():
-        try:
-            return json.load(rule_path.open())
-        except json.JSONDecodeError:
-            pass
-    # ---------------------------
+
     logger().debug(f"fetch problem rules [problem_id: {problem_id}]")
     resp = rq.get(
         f"{BACKEND_API}/problem/{problem_id}/rules",
@@ -65,16 +52,11 @@ def fetch_problem_network_config(problem_id: int) -> dict:
     Fetch network configuration (sidecars & external) from backend server
     Similar to fetch_problem_rules
     """
-    # for local debug
-    local_path = NETWORK_DIR / f"{problem_id}.json"
-    if local_path.exists():
-        logger().debug(f"loading local network config for {problem_id}")
-        try:
-            with open(local_path, "r") as f:
-                return json.load(f)
-        except:
-            pass
-    # ---------------------------
+    url = f"{BACKEND_API}/problem/{problem_id}/network"
+    logger().debug(f"DEBUG: Checking URL: {url}")
+    resp = rq.get(url, params={"token": SANDBOX_TOKEN})
+    logger().debug(f"DEBUG: Status Code: {resp.status_code}")
+
     logger().debug(f"fetch problem network config [problem_id: {problem_id}]")
     resp = rq.get(
         f"{BACKEND_API}/problem/{problem_id}/network",
