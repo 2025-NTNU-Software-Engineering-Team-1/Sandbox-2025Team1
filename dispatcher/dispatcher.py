@@ -297,9 +297,9 @@ class Dispatcher(threading.Thread):
             ip_list = external_config.get("ip", [])
             url_list = external_config.get("url", [])
 
-            # white model
-            # black model and ip list not empty
-            if model == "white" or (model == "black" and
+            # black model
+            # white model and ip list not empty
+            if model == "black" or (model == "white" and
                                     (ip_list or url_list)):
                 enable_router_mode = True
 

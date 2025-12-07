@@ -19,14 +19,13 @@ nft add rule nat postrouting oifname "eth0" masquerade
 # 2. base rules
 nft add rule inet filter output oifname "lo" accept  # allow localhost
 nft add rule inet filter output ct state established,related accept # allow established/related packets
-nft add rule inet filter output udp dport 53 accept  # allow DNS
-nft add rule inet filter output tcp dport 53 accept
+nft add rule inet filter output ip daddr 127.0.0.11 udp dport 53 accept
+nft add rule inet filter output ip daddr 127.0.0.11 tcp dport 53 accept
 
 # 3. UID based rules
 # Teacher (UID 1450): allow 
-nft add rule inet filter output meta skuid 1450 accept
-nft add rule inet filter output meta skuid 1451 jump student_out
 nft add rule inet filter output meta skuid 0 accept
+nft add rule inet filter output meta skuid 1450 jump student_out
 
 # 4. Read JSON config
 if [ -f "$CONFIG_FILE" ]; then
@@ -56,6 +55,11 @@ if [ -f "$CONFIG_FILE" ]; then
 
     if [ "$MODEL" == "white" ]; then
         # === Whitelist mode ===
+        echo "Allowing Private IPs for Sidecars..."
+        nft add rule inet filter student_out ip daddr 10.0.0.0/8 accept
+        nft add rule inet filter student_out ip daddr 172.16.0.0/12 accept
+        nft add rule inet filter student_out ip daddr 192.168.0.0/16 accept
+        
         for ip in $ALL_IPS; do
             echo "Allow: $ip"
             if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then

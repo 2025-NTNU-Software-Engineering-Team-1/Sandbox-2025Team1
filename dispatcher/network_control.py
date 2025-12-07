@@ -2,6 +2,8 @@ import json
 import time
 import docker
 import pathlib
+import io
+import tarfile
 from typing import Dict, List, Optional
 
 from . import config
@@ -31,10 +33,16 @@ class NetworkController:
         This is designed to run in a separate thread to avoid blocking.
         """
         if not self.client or not sidecars:
+            logger().warning(
+                "Cannot ensure sidecar images: Docker client not initialized or no sidecars provided."
+            )
             return
         for sidecar in sidecars:
             try:
                 self.client.inspect_image(sidecar.image)
+                logger().info(
+                    f"[Pre-pull] Image {sidecar.image} already exists locally."
+                )
             except docker.errors.ImageNotFound:
                 logger().info(
                     f"[Pre-pull] Image {sidecar.image} not found, pulling...")
@@ -58,34 +66,59 @@ class NetworkController:
         if not self.client:
             raise RuntimeError("Docker client not initialized")
 
-        submission_path = self.SUBMISSION_DIR / submission_id
-        network_dir = submission_path / "network_config"
-        network_dir.mkdir(parents=True, exist_ok=True)
+        config_bytes = json.dumps(config_data).encode("utf-8")
 
-        conf_file = network_dir / "network_ip.json"
-        with open(conf_file, "w") as f:
-            json.dump(config_data, f)
+        # submission_path = self.SUBMISSION_DIR / submission_id
+        # network_dir = submission_path / "network_config"
+        # network_dir.mkdir(parents=True, exist_ok=True)
+
+        # conf_file = network_dir / "network_ip.json"
+        # with open(conf_file, "w") as f:
+        #     json.dump(config_data, f)
 
         logger().info(f"Starting Router for {submission_id}")
 
         router_img = "normal-oj/sandbox-router:latest"
+        router_name = f"router-{submission_id}"
+        # remove existing router container if any
+        try:
+            self.client.remove_container(router_name, v=True, force=True)
+            logger().debug(f"Removed stale router container: {router_name}")
+        except Exception:
+            pass
+
         host_config = self.client.create_host_config(
             cap_add=["NET_ADMIN"],
-            binds={
-                str(network_dir.resolve()): {
-                    "bind": "/etc/network_config",
-                    "mode": "ro",
-                }
-            },
             network_mode="bridge",
         )
 
         container = self.client.create_container(
             image=router_img,
-            name=f"router-{submission_id}",
+            name=router_name,
             host_config=host_config,
             detach=True,
         )
+        tar_stream = io.BytesIO()
+        with tarfile.open(fileobj=tar_stream, mode="w") as tar:
+            tar_info = tarfile.TarInfo(
+                name="etc/network_config/network_ip.json")
+            tar_info.size = len(config_bytes)
+            tar_info.mtime = time.time()
+            tar.addfile(tar_info, io.BytesIO(config_bytes))
+        tar_stream.seek(0)
+
+        try:
+            self.client.put_archive(
+                container=container.get("Id"),
+                path="/",
+                data=tar_stream,
+            )
+        except Exception as e:
+            logger().error(f"Failed to copy config to router container: {e}")
+            self.client.remove_container(container.get("Id"),
+                                         v=True,
+                                         force=True)
+            raise
 
         self.client.start(container)
         router_id = container.get("Id")
@@ -122,6 +155,29 @@ class NetworkController:
         logger().info(f"Setting up sidecar for Submission: {submission_id}")
         net_name = f"noj-net-{submission_id}"
 
+        try:
+            networks = self.client.networks(names=[net_name])
+            for n in networks:
+                nid = n.get("Id")
+                if "Containers" in n and n["Containers"]:
+                    for cid in n["Containers"]:
+                        logger().warning(
+                            f"Force removing zombie container attached to net: {cid}"
+                        )
+                        try:
+                            self.client.remove_container(cid,
+                                                         v=True,
+                                                         force=True)
+                        except Exception:
+                            pass
+
+                logger().warning(
+                    f"Removing existing network {net_name} ({nid})")
+                self.client.remove_network(nid)
+        except Exception as e:
+            logger().warning(
+                f"Error checking/removing network {net_name}: {e}")
+
         for idx, sidecar in enumerate(sidecars):
             logger().debug(
                 f"starting sidecar {sidecar.image} for {submission_id}")
@@ -134,19 +190,6 @@ class NetworkController:
                     f"Force removed zombie container: {container_name}")
             except Exception:
                 pass
-
-        # remove existing network if any
-        try:
-            networks = self.client.networks(names=[net_name])
-            for n in networks:
-                try:
-                    self.client.remove_network(n.get("Id"))
-                    logger().warning(f"Removed existing network {net_name}")
-                except Exception:
-                    pass
-        except Exception as e:
-            logger().warning(
-                f"Error checking/removing network {net_name}: {e}")
 
         # build internal network
         try:
@@ -216,6 +259,12 @@ class NetworkController:
         partial_ids: Optional[List[str]] = None,
         partial_net: Optional[str] = None,
     ):
+        # ======= [DEBUG] =======
+        print(
+            f"[DEBUG] Pausing cleanup for 60s to inspect Router for submission {submission_id}..."
+        )
+        time.sleep(100)
+        # =======================
         if not self.client:
             return
         res = self.sidecar_resources.pop(submission_id, None)
