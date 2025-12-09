@@ -13,8 +13,8 @@ chmod +x sandbox_interactive
 docker build -t noj-c-cpp -f c_cpp_dockerfile . --no-cache
 docker build -t noj-py3 -f python3_dockerfile . --no-cache
 docker build -t noj-interactive -f interactive_dockerfile . --no-cache
-
-docker build -t normal-oj/sandbox-router:latest router/ --no-cache
+# network router
+docker build -t noj-router network_router/ --no-cache
 
 # create submissions folder
 mkdir -p submissions

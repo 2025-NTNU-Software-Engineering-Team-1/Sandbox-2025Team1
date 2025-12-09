@@ -21,3 +21,10 @@ class Execute:
 @dataclass
 class StaticAnalysis:
     submission_id: str
+    problem_id: int
+
+
+@dataclass
+class NetworkSetup:
+    submission_id: str
+    problem_id: int

@@ -1,14 +1,22 @@
+import io
 import json
 import time
 import docker
 import pathlib
-import io
 import tarfile
 from typing import Dict, List, Optional
 
 from . import config
 from .utils import logger
 from .meta import Sidecar
+from .pipeline import fetch_problem_network_config
+from .asset_cache import ensure_extracted_resource, get_asset_checksum
+
+# [DEBUG]
+import logging
+
+logger().setLevel(logging.DEBUG)
+# [DEBUG]
 
 
 class NetworkController:
@@ -17,87 +25,394 @@ class NetworkController:
                  docker_url: str,
                  submission_dir: Optional[pathlib.Path] = None):
         self.SUBMISSION_DIR = submission_dir or config.SUBMISSION_DIR
-        self.sidecar_resources: Dict[str, Dict] = {}
+        self.resources: Dict[str, Dict] = {}
+
+        logger().debug(
+            f"(*_*)[In __init__] Initializing NetworkController with Docker URL: {docker_url}"
+        )
 
         try:
             self.client = docker.APIClient(base_url=docker_url)
+            self.docker_cli = docker.from_env(
+                environment={"DOCKER_HOST": docker_url} if docker_url else None
+            )
         except Exception as e:
-            logger().error(
-                f"Failed to initialize Docker client in NetworkController: {e}"
-            )
+            logger().error(f"Failed to initialize Docker client: {e}")
             self.client = None
+            self.docker_cli = None
 
-    def ensure_sidecar_images(self, sidecars: list[Sidecar]):
+    def provision_network(self, submission_id: str, problem_id: int):
         """
-        Check if required sidecar images exist locally; pull if missing.
-        This is designed to run in a separate thread to avoid blocking.
+        Main Entry: Fetch Config -> Check/Build Custom Image -> Setup Topology
         """
-        if not self.client or not sidecars:
-            logger().warning(
-                "Cannot ensure sidecar images: Docker client not initialized or no sidecars provided."
-            )
-            return
-        for sidecar in sidecars:
-            try:
-                self.client.inspect_image(sidecar.image)
-                logger().info(
-                    f"[Pre-pull] Image {sidecar.image} already exists locally."
-                )
-            except docker.errors.ImageNotFound:
-                logger().info(
-                    f"[Pre-pull] Image {sidecar.image} not found, pulling...")
-                try:
-                    self.client.pull(sidecar.image)
-                    logger().info(
-                        f"[Pre-pull] Successfully pulled {sidecar.image}")
-                except Exception as e:
-                    logger().error(
-                        f"[Pre-pull] Failed to pull image {sidecar.image}: {e}"
-                    )
-            except Exception as e:
-                logger().warning(
-                    f"[Pre-pull] Error checking image {sidecar.image}: {e}")
-
-    def setup_router(self, submission_id: str, config_data: dict) -> str:
-        """
-        Setup router container for the submission based on external_config.
-        Returns the router container ID.
-        """
+        logger().debug(
+            f"(*_*)[In provision_network] Starting network provisioning for submission {submission_id}, problem {problem_id}"
+        )
         if not self.client:
             raise RuntimeError("Docker client not initialized")
 
-        config_bytes = json.dumps(config_data).encode("utf-8")
+        # 1. Fetch Config
+        logger().info(f"[{submission_id}] Fetching network config...")
+        net_config = fetch_problem_network_config(problem_id)
+        external_config = net_config.get("external", {})
+        logger().debug(
+            f"(*_*)[In provision_network] External network config: {external_config}"
+        )
+        sidecars_config = net_config.get("sidecars", [])
+        logger().debug(
+            f"(*_*)[In provision_network] Sidecars config: {sidecars_config}")
+        custom_env = net_config.get("custom_env", {})
+        logger().debug(
+            f"(*_*)[In provision_network] Custom environment config: {custom_env}"
+        )
 
-        # submission_path = self.SUBMISSION_DIR / submission_id
-        # network_dir = submission_path / "network_config"
-        # network_dir.mkdir(parents=True, exist_ok=True)
+        # 2. Handle Custom Dockerfile
+        # Ensure local Docker Image is up-to-date
+        custom_image_name = None
+        if custom_env and custom_env.get("enabled"):
+            env_whitelist = custom_env.get("env_list")
+            custom_image_name = self._ensure_docker_image(
+                problem_id, env_whitelist)
 
-        # conf_file = network_dir / "network_ip.json"
-        # with open(conf_file, "w") as f:
-        #     json.dump(config_data, f)
+        # 3. Setup Network Topology
+        self._setup_topology(submission_id=submission_id,
+                             external_config=external_config,
+                             sidecars_config=sidecars_config,
+                             custom_image=custom_image_name)
 
-        logger().info(f"Starting Router for {submission_id}")
+    def _ensure_docker_image(
+            self,
+            problem_id: int,
+            allowed_envs: Optional[List[str]] = None) -> List[str]:
+        """
+        Integrate asset_cache:
+        1. Check Checksum
+        2. Unzip dockerfiles.zip
+        3. Build dockerfiles
+        """
+        logger().debug(
+            f"(*_*)[In _ensure_docker_image] Checking custom docker images for problem {problem_id}"
+        )
+        asset_type = "network_dockerfile"
+        # Check the newest Checksum
+        latest_checksum = get_asset_checksum(problem_id, asset_type)
+        if not latest_checksum:
+            return []
 
-        router_img = "normal-oj/sandbox-router:latest"
-        router_name = f"router-{submission_id}"
-        # remove existing router container if any
+        logger().info(f"Checking custom envs for problem {problem_id}...")
+        extracted_path = ensure_extracted_resource(problem_id, asset_type)
+        if not extracted_path:
+            return []
+        built_images = {}
+
+        for item in extracted_path.iterdir():
+            if item.is_dir() and (item / "Dockerfile").exists():
+                folder_name = item.name
+                if allowed_envs is not None and folder_name not in allowed_envs:
+                    logger().info(
+                        f"Skipping environment '{folder_name}' (not in env_list)."
+                    )
+                    continue
+
+                # Tag：noj-custom-env:{pid}-{folder_name}
+                tag = f"noj-custom-env:{problem_id}-{item.name}"
+                if self._build_one_image(item, tag, latest_checksum):
+                    built_images[folder_name] = tag
+
+        return built_images
+
+    def _build_one_image(self, context_path: pathlib.Path, tag: str,
+                         checksum: str) -> bool:
+        logger().debug(
+            f"(*_*)[In _build_one_image] Building image {tag} with checksum {checksum}"
+        )
         try:
-            self.client.remove_container(router_name, v=True, force=True)
-            logger().debug(f"Removed stale router container: {router_name}")
-        except Exception:
+            img = self.docker_cli.images.get(tag)
+            if img.labels.get("noj_hash") == checksum:
+                logger().info(f"Custom image {tag} up-to-date (hash match).")
+                return True
+        except docker.errors.ImageNotFound:
             pass
+        except Exception as e:
+            logger().warning(f"Error checking image {tag}: {e}")
 
-        host_config = self.client.create_host_config(
-            cap_add=["NET_ADMIN"],
-            network_mode="bridge",
+        # Build Image
+        logger().info(f"Building Docker image {tag}...")
+        try:
+            self.docker_cli.images.build(path=str(context_path),
+                                         tag=tag,
+                                         rm=True,
+                                         labels={"noj_hash": checksum},
+                                         nocache=False)
+            logger().info(f"Built success: {tag}")
+            return True
+        except Exception as e:
+            logger().error(f"Failed to build {tag}: {e}")
+            return False
+
+    def _wait_for_containers_running(self,
+                                     container_ids: List[str],
+                                     timeout: int = 30):
+        # Check containers UP
+        if not container_ids:
+            return
+
+        logger().info(f"Waiting for containers to be ready: {container_ids}")
+        start_time = time.time()
+        pending_ids = set(container_ids)
+
+        while pending_ids:
+            if time.time() - start_time > timeout:
+                logger().warning(
+                    f"Timeout waiting for containers: {pending_ids}")
+                raise RuntimeError(
+                    f"Network provisioning failed: Containers {pending_ids} failed to start."
+                )
+
+            current_check = list(pending_ids)
+            for cid in current_check:
+                try:
+                    info = self.client.inspect_container(cid)
+                    state = info.get("State", {})
+                    status = state.get("Status", "")
+
+                    if status == "running":
+                        pending_ids.remove(cid)
+                    elif status in ("exited", "dead"):
+                        err = state.get("Error", "Unknown error")
+                        raise RuntimeError(f"Container {cid} crashed: {err}")
+                except docker.errors.NotFound:
+                    pending_ids.remove(cid)
+                except Exception:
+                    pass
+
+            if pending_ids:
+                time.sleep(0.5)
+
+    def _setup_topology(self,
+                        submission_id: str,
+                        external_config: dict,
+                        sidecars_config: list,
+                        custom_image: str = None):
+        # Build related Sidecars and Router
+        logger().debug(
+            f"(*_*)[In _setup_topology] Setting up topology {external_config}")
+
+        need_router = False
+        if external_config:
+            if external_config.get("ip") or external_config.get("url"):
+                need_router = True
+
+        has_sidecars = sidecars_config and len(sidecars_config) > 0
+        has_custom = custom_image and len(custom_image) > 0
+        need_internal = has_sidecars or has_custom
+
+        resource_record = {
+            "net_ids": [],
+            "container_ids": [],
+            "router_id": None,
+            "mode": "none",
+            "custom_image": custom_image
+        }
+
+        logger().debug(
+            f"(*_*)[In _setup_topology] Setting up topology for submission {submission_id} with external_config={external_config}, sidecars_config={sidecars_config}, custom_image={custom_image}"
         )
 
+        try:
+            containers_to_wait = []
+            net_name = f"noj-net-{submission_id}"
+
+            # Cleanup existing network if any
+            if need_router or need_internal:
+                try:
+                    logger().info(
+                        f"Ensuring clean state for network: {net_name}")
+                    self.client.remove_network(net_name)
+                except Exception:
+                    pass
+
+            # Case 1: Mixed (Router + Sidecars)
+            if need_router and need_internal:
+                logger().debug(
+                    f"(*_*)[In _setup_topology] Setting up mixed topology with router and sidecars for submission {submission_id}"
+                )
+
+                net_id = self.client.create_network(net_name,
+                                                    driver="bridge")["Id"]
+                resource_record["net_ids"].append(net_id)
+
+                internal_ids = []
+
+                # Start Sidecars
+                if sidecars_config:
+                    sc_ids = self._start_sidecars(submission_id,
+                                                  sidecars_config, net_name)
+                    internal_ids.extend(sc_ids)
+                # Start Custom Envs
+                if custom_image:
+                    ce_ids = self._start_custom_envs(submission_id,
+                                                     custom_image, net_name)
+                    internal_ids.extend(ce_ids)
+
+                resource_record["container_ids"].extend(internal_ids)
+                containers_to_wait.extend(internal_ids)
+
+                # Collect Sidecar IPs for Router Whitelist
+                sidecar_ips = []
+                for c_id in internal_ids:
+                    try:
+                        info = self.client.inspect_container(c_id)
+                        ip = info["NetworkSettings"]["Networks"][net_name][
+                            "IPAddress"]
+                        if ip:
+                            sidecar_ips.append(ip)
+                    except Exception as e:
+                        logger().warning(
+                            f"Failed to inspect IP for container {c_id}: {e}")
+
+                logger().info(f"Allowed Internal IPs: {sidecar_ips}")
+
+                # Start Router
+                router_config = external_config.copy()
+                router_config["sidecar_whitelist"] = sidecar_ips
+
+                # Router connect Bridge
+                router_id = self._start_router(submission_id, router_config)
+
+                self.client.connect_container_to_network(router_id, net_id)
+                resource_record["router_id"] = router_id
+                containers_to_wait.append(router_id)
+                resource_record["mode"] = f"container:{router_id}"
+
+            # Case 2: Router Only
+            elif need_router:
+                logger().debug(
+                    f"(*_*)[In _setup_topology] Setting up router-only topology for submission {submission_id}"
+                )
+                router_id = self._start_router(submission_id, external_config)
+                resource_record["router_id"] = router_id
+                resource_record["mode"] = f"container:{router_id}"
+                containers_to_wait.append(router_id)
+
+            # Case 3: Sidecar Only
+            elif need_internal:
+                logger().debug(
+                    f"(*_*)[In _setup_topology] Setting up sidecar-only topology for submission {submission_id}"
+                )
+
+                net_id = self.client.create_network(net_name,
+                                                    driver="bridge",
+                                                    internal=True)["Id"]
+                resource_record["net_ids"].append(net_id)
+
+                # Start Sidecars
+                if sidecars_config:
+                    sc_ids = self._start_sidecars(submission_id,
+                                                  sidecars_config, net_name)
+                    resource_record["container_ids"].extend(sc_ids)
+                    containers_to_wait.extend(sc_ids)
+                # Start Custom Envs
+                if custom_image:
+                    ce_ids = self._start_custom_envs(submission_id,
+                                                     custom_image, net_name)
+                    resource_record["container_ids"].extend(ce_ids)
+                    containers_to_wait.extend(ce_ids)
+
+                resource_record["mode"] = net_name
+
+            self._wait_for_containers_running(containers_to_wait)
+            self.resources[submission_id] = resource_record
+
+        except Exception as e:
+            logger().error(f"Topology setup failed: {e}")
+            self.cleanup(submission_id, temp_resource=resource_record)
+            raise e
+
+    def _start_sidecars(self, submission_id: str, configs: list,
+                        net_name: str) -> List[str]:
+        ids = []
+        for idx, sc in enumerate(configs):
+            logger().debug(
+                f"(*_*)[In _start_sidecars] Starting sidecar {idx} for submission {submission_id} with config: {sc}"
+            )
+            sc_obj = Sidecar(**sc)
+            try:
+                self.client.inspect_image(sc_obj.image)
+            except docker.errors.ImageNotFound:
+                logger().info(f"Pulling image {sc_obj.image}")
+                self.client.pull(sc_obj.image)
+
+            host_config = self.client.create_host_config(network_mode=net_name)
+            networking_config = self.client.create_networking_config({
+                net_name:
+                self.client.create_endpoint_config(aliases=[sc_obj.name])
+            })
+
+            c = self.client.create_container(
+                image=sc_obj.image,
+                environment=sc_obj.env,
+                command=sc_obj.args,
+                name=f"sidecar-{submission_id}-{idx}",
+                host_config=host_config,
+                networking_config=networking_config,
+                detach=True)
+            cid = c.get("Id")
+            self.client.start(cid)
+            ids.append(cid)
+        return ids
+
+    def _start_custom_envs(self, submission_id: str, images_map: Dict[str,
+                                                                      str],
+                           net_name: str) -> List[str]:
+        ids = []
+        if not images_map:
+            return ids
+
+        logger().debug(
+            f"(*_*)[In _start_custom_envs] Starting custom environments for submission {submission_id} with images: {images_map}"
+        )
+        for alias, image_tag in images_map.items():
+            logger().info(
+                f"Starting custom env [{alias}] using image [{image_tag}]")
+
+            host_config = self.client.create_host_config(network_mode=net_name)
+            networking_config = self.client.create_networking_config({
+                net_name:
+                self.client.create_endpoint_config(aliases=[alias])
+            })
+
+            try:
+                c = self.client.create_container(
+                    image=image_tag,
+                    name=f"custom-{alias}-{submission_id}",
+                    host_config=host_config,
+                    networking_config=networking_config,
+                    detach=True)
+                cid = c.get("Id")
+                self.client.start(cid)
+                ids.append(cid)
+            except Exception as e:
+                logger().error(f"Failed to start custom env {alias}: {e}")
+                raise e
+        return ids
+
+    def _start_router(self, submission_id: str, config_data: dict) -> str:
+        logger().debug(
+            f"(*_*)[In _start_router] Starting router for submission {submission_id} with config: {config_data}"
+        )
+        config_bytes = json.dumps(config_data).encode('utf-8')
+
+        # Router default connect Bridge
+        host_config = self.client.create_host_config(cap_add=["NET_ADMIN"],
+                                                     network_mode="bridge")
         container = self.client.create_container(
-            image=router_img,
-            name=router_name,
+            image="noj-router",
+            name=f"router-{submission_id}",
             host_config=host_config,
-            detach=True,
-        )
+            detach=True)
+
+        # Inject config
         tar_stream = io.BytesIO()
         with tarfile.open(fileobj=tar_stream, mode="w") as tar:
             tar_info = tarfile.TarInfo(
@@ -107,199 +422,49 @@ class NetworkController:
             tar.addfile(tar_info, io.BytesIO(config_bytes))
         tar_stream.seek(0)
 
-        try:
-            self.client.put_archive(
-                container=container.get("Id"),
-                path="/",
-                data=tar_stream,
-            )
-        except Exception as e:
-            logger().error(f"Failed to copy config to router container: {e}")
-            self.client.remove_container(container.get("Id"),
-                                         v=True,
-                                         force=True)
-            raise
+        self.client.put_archive(container=container.get("Id"),
+                                path="/",
+                                data=tar_stream)
+        self.client.start(container.get("Id"))
+        return container.get("Id")
 
-        self.client.start(container)
-        router_id = container.get("Id")
-
-        res = self.sidecar_resources.get(submission_id)
-        if res and res.get("network_name"):
-            net_name = res["network_name"]
-            try:
-                self.client.connect_container_to_network(
-                    container=router_id,
-                    net_id=net_name,
-                )
-            except Exception as e:
-                logger().warning(
-                    f"Failed to connect router {router_id} to network {net_name}: {e}"
-                )
-
-        if not res:
-            res = {}
-            self.sidecar_resources[submission_id] = res
-        res["router_id"] = router_id
-
-        return router_id
-
-    def setup_sidecars(self, submission_id: str,
-                       sidecars: list[Sidecar]) -> list[str]:
-        # set sidecar containers
-        if not sidecars:
-            return []
-
-        if not self.client:
-            raise RuntimeError("Docker client not initialized")
-
-        logger().info(f"Setting up sidecar for Submission: {submission_id}")
-        net_name = f"noj-net-{submission_id}"
-
-        try:
-            networks = self.client.networks(names=[net_name])
-            for n in networks:
-                nid = n.get("Id")
-                if "Containers" in n and n["Containers"]:
-                    for cid in n["Containers"]:
-                        logger().warning(
-                            f"Force removing zombie container attached to net: {cid}"
-                        )
-                        try:
-                            self.client.remove_container(cid,
-                                                         v=True,
-                                                         force=True)
-                        except Exception:
-                            pass
-
-                logger().warning(
-                    f"Removing existing network {net_name} ({nid})")
-                self.client.remove_network(nid)
-        except Exception as e:
-            logger().warning(
-                f"Error checking/removing network {net_name}: {e}")
-
-        for idx, sidecar in enumerate(sidecars):
-            logger().debug(
-                f"starting sidecar {sidecar.image} for {submission_id}")
-            container_name = f"sidecar-{submission_id}-{idx}"
-            try:
-                self.client.remove_container(container_name,
-                                             v=True,
-                                             force=True)
-                logger().warning(
-                    f"Force removed zombie container: {container_name}")
-            except Exception:
-                pass
-
-        # build internal network
-        try:
-            network = self.client.create_network(
-                name=net_name,
-                driver="bridge",
-                internal=True,
-                check_duplicate=True,
-            )
-        except Exception as e:
-            logger().error(
-                f"Failed to create network {net_name} for {submission_id}: {e}"
-            )
-            raise
-
-        container_ids: List[str] = []
-
-        try:
-            for idx, sidecar in enumerate(sidecars):
-                logger().debug(
-                    f"starting sidecar {sidecar.image} for {submission_id}")
-
-                env_list = [f"{k}={v}" for k, v in sidecar.env.items()]
-
-                host_config = self.client.create_host_config(
-                    network_mode=net_name,
-                    restart_policy={"Name": "no"},
-                )
-                container = self.client.create_container(
-                    image=sidecar.image,
-                    environment=env_list,
-                    command=sidecar.args,
-                    name=f"sidecar-{submission_id}-{idx}",
-                    host_config=host_config,
-                    networking_config=self.client.create_networking_config({
-                        net_name:
-                        self.client.create_endpoint_config(
-                            aliases=[sidecar.name])
-                    }),
-                )
-                cid = container.get("Id")
-                container_ids.append(cid)
-                self.client.start(container)
-
-            time.sleep(10)  # wait for sidecars to initialize
-
-            self.sidecar_resources[submission_id] = {
-                "network_name": net_name,
-                "network_id": network.get("Id"),
-                "container_ids": container_ids,
-            }
-            return container_ids
-
-        except Exception as e:
-            logger().error(
-                f"Error setting up sidecars for {submission_id}: {e}")
-            self.cleanup(
-                submission_id,
-                partial_ids=container_ids,
-                partial_net=net_name,
-            )
-            raise
-
-    def cleanup(
-        self,
-        submission_id: str,
-        partial_ids: Optional[List[str]] = None,
-        partial_net: Optional[str] = None,
-    ):
-        # ======= [DEBUG] =======
-        print(
-            f"[DEBUG] Pausing cleanup for 60s to inspect Router for submission {submission_id}..."
+    def get_network_mode(self, submission_id: str) -> str:
+        logger().debug(
+            f"(*_*)[In get_network_mode] Getting network mode for submission {submission_id}"
         )
-        time.sleep(100)
-        # =======================
-        if not self.client:
-            return
-        res = self.sidecar_resources.pop(submission_id, None)
+        res = self.resources.get(submission_id)
+        if not res: return "none"
+        return res.get("mode", "none")
 
-        c_ids = res.get("container_ids", []) if res else (partial_ids or [])
-        net_name = res.get("network_name") if res else partial_net
-        router_id = res.get("router_id") if res else None
+    def get_custom_image(self, submission_id: str) -> Optional[str]:
+        logger().debug(
+            f"(*_*)[In get_custom_image] Getting custom image for submission {submission_id}"
+        )
+        res = self.resources.get(submission_id)
+        if not res: return None
+        return res.get("custom_image")
 
-        if router_id:
-            try:
-                logger().debug(f"cleaning up router container: {router_id}")
-                self.client.remove_container(router_id, v=True, force=True)
-            except Exception:
-                pass
+    def cleanup(self, submission_id: str, temp_resource: dict = None):
+        logger().debug(
+            f"(*_*)[In cleanup] Cleaning up resources for submission {submission_id}"
+        )
+        # [DEBUG]
+        time.sleep(30)
+        # [DEBUG]
+        res = temp_resource or self.resources.pop(submission_id, {})
+
+        c_ids = res.get("container_ids", [])[:]
+        if res.get("router_id"):
+            c_ids.append(res.get("router_id"))
 
         for cid in c_ids:
             try:
-                logger().debug(f"cleaning up sidecar container: {cid}")
                 self.client.remove_container(cid, v=True, force=True)
             except Exception:
                 pass
 
-        if net_name:
+        for nid in res.get("net_ids", []):
             try:
-                logger().debug(f"cleaning up network: {net_name}")
-                self.client.remove_network(net_name)
+                self.client.remove_network(nid)
             except Exception:
                 pass
-
-    def get_network_mode(self, submission_id: str) -> str:
-        res = self.sidecar_resources.get(submission_id)
-        if not res:
-            return "none"
-        if "router_id" in res:
-            return f"container:{res['router_id']}"
-        elif "network_name" in res:
-            return res["network_name"]
-        return "none"

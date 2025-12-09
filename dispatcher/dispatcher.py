@@ -23,7 +23,7 @@ from .build_strategy import (
     prepare_make_normal,
 )
 from .utils import logger
-from .pipeline import fetch_problem_rules, fetch_problem_network_config
+from .pipeline import fetch_problem_rules
 from .static_analysis import run_static_analysis, build_sa_ce_task_content
 from .network_control import NetworkController
 
@@ -155,6 +155,17 @@ class Dispatcher(threading.Thread):
 
     # [Static Analysis] end
 
+    # [Network] Handle Network Setup Failure
+    def _handle_network_failure(self, submission_id, error_msg):
+        fail_content = build_sa_ce_task_content(
+            self.result[submission_id][0],
+            f"Network Setup Failed: {error_msg}")
+        self.result[submission_id] = (self.result[submission_id][0],
+                                      fail_content)
+        self.on_submission_complete(submission_id)
+
+    # [Network] end
+
     # Helper methods for Build Strategy
     def _is_prebuilt_submission(self, submission_id: str) -> bool:
         return submission_id in self.prebuilt_submissions
@@ -248,84 +259,7 @@ class Dispatcher(threading.Thread):
 
         with (submission_path / "meta.json").open() as f:
             submission_config = Meta.parse_obj(json.load(f))
-
-        # [Static Analysis] Fetch Static Analysis Rules
-        rules_json = fetch_problem_rules(problem_id)
-        logger().debug(f"fetched static analysis rules: {rules_json}")
-        # [Static Analysis] end
-        # [Network] Setup Sidecar & Router
-        # Network Config Fetching & Check configuration
-        network_config = fetch_problem_network_config(problem_id)
-        external_config = network_config.get("external", {}) or {}
-        sidecars_config = network_config.get("sidecars") or []
-        router_id = None
-        logger().debug(f"fetched network config MAX: {network_config}")
-        logger().debug(f"sidecars config: {sidecars_config}")
-        logger().debug(f"external config: {external_config}")
-        # check sidecar image pull
-        if sidecars_config:
-            try:
-                sidecar_objs_for_pull = [Sidecar(**s) for s in sidecars_config]
-                threading.Thread(
-                    target=self.network_controller.ensure_sidecar_images,
-                    args=(sidecar_objs_for_pull, ),
-                    daemon=True,
-                ).start()
-            except Exception as e:
-                logger().warning(
-                    f"Failed to trigger background image pull: {e}")
-
-        try:
-            if sidecars_config:
-                sidecar_objs = [Sidecar(**s) for s in sidecars_config]
-                self.network_controller.setup_sidecars(
-                    submission_id=submission_id,
-                    sidecars=sidecar_objs,
-                )
-        except Exception as e:
-            logger().error(f"Sidecar setup failed: {e}")
-            self.result[submission_id] = (
-                submission_config,
-                build_sa_ce_task_content(submission_config,
-                                         f"Sidecar Setup Failed: {e}"),
-            )
-            self.on_submission_complete(submission_id)
-            return
-        enable_router_mode = False
-        if external_config:
-            model = external_config.get("model", "black").lower()
-            ip_list = external_config.get("ip", [])
-            url_list = external_config.get("url", [])
-
-            # black model
-            # white model and ip list not empty
-            if model == "black" or (model == "white" and
-                                    (ip_list or url_list)):
-                enable_router_mode = True
-
-        if enable_router_mode:
-            try:
-                router_id = self.network_controller.setup_router(
-                    submission_id=submission_id,
-                    config_data=external_config,
-                )
-                self.submission_resources[submission_id] = {
-                    "router_id": router_id,
-                }
-            except Exception as e:
-                logger().error(
-                    f"Network/Router setup failed for submission {submission_id}: {e}"
-                )
-                self.network_controller.cleanup(submission_id)
-                self.result[submission_id] = (
-                    submission_config,
-                    build_sa_ce_task_content(
-                        submission_config,
-                        f"Network/Router Setup Failed: {e}"),
-                )
-                self.on_submission_complete(submission_id)
-                return
-        # [Network] end
+        logger().debug(f"(*_*)[In handle]submission meta: {submission_config}")
 
         # [Result Init]
         task_content = {}
@@ -393,12 +327,16 @@ class Dispatcher(threading.Thread):
                         task_id=i,
                         case_id=j,
                     ))
-
         self.pending_tasks[submission_id] = tasks_to_run
-
         try:
+            logger().info(
+                f"!!! DEBUG MODE: Skipping SA, going straight to Network Setup for {submission_id} !!!"
+            )
             self.queue.put_nowait(
-                job.StaticAnalysis(submission_id=submission_id))
+                job.NetworkSetup(submission_id=submission_id,
+                                 problem_id=problem_id))
+
+            # self.queue.put_nowait(job.StaticAnalysis(submission_id=submission_id))
         except queue.Full as e:
             self.release(submission_id)
             raise e
@@ -456,8 +394,6 @@ class Dispatcher(threading.Thread):
                 continue
             # get task info
             submission_config, _ = self.result[submission_id]
-            problem_id = (submission_config.problem_id if hasattr(
-                submission_config, "problem_id") else 1)
 
             # [Static Analysis] Handle Static Analysis Job
             if isinstance(_job, job.StaticAnalysis):
@@ -465,7 +401,7 @@ class Dispatcher(threading.Thread):
                 submission_path = self.SUBMISSION_DIR / submission_id
 
                 try:
-                    rules_json = fetch_problem_rules(problem_id)
+                    rules_json = fetch_problem_rules(_job.problem_id)
                     logger().debug(
                         f"fetched static analysis rules: {rules_json}")
                     is_zip_mode = (SubmissionMode(
@@ -486,10 +422,11 @@ class Dispatcher(threading.Thread):
                         logger().info(
                             f"Static Analysis succeeded for {submission_id}.  Releasing pending jobs."
                         )
-                        pending_jobs = self.pending_tasks.pop(
-                            submission_id, [])
-                        for pj in pending_jobs:
-                            self.queue.put(pj)
+                        # pending_jobs = self.pending_tasks.pop(submission_id, [])
+                        # for pj in pending_jobs:
+                        #     self.queue.put(pj)
+                        self.queue.put(
+                            job.NetworkSetup(submission_id=submission_id))
                     else:
                         logger().info(
                             f"Static Analysis failed for {submission_id}. Marking CE for all cases."
@@ -515,12 +452,30 @@ class Dispatcher(threading.Thread):
                         },
                         fail_content,
                     )
-
                 continue
             # [Static Analysis] end
 
             # [Network] Determine Network Mode
-            net_mode = self.network_controller.get_network_mode(submission_id)
+            if isinstance(_job, job.NetworkSetup):
+                logger().info(f"Setting up network for {submission_id}")
+                submission_config, _ = self.result[submission_id]
+                logger().debug(
+                    f"(*_*)[In NetworkSetup] submission meta: {submission_config}"
+                )
+
+                try:
+                    self.network_controller.provision_network(
+                        submission_id=submission_id,
+                        problem_id=_job.problem_id,
+                    )
+                    pending_jobs = self.pending_tasks.pop(submission_id, [])
+                    for pj in pending_jobs:
+                        self.queue.put(pj)
+
+                except Exception as e:
+                    logger().error(f"Network provision failed: {e}")
+                    self._handle_network_failure(submission_id, str(e))
+                continue
             # [Network] end
 
             # 1. Build Job
@@ -558,6 +513,8 @@ class Dispatcher(threading.Thread):
                   and self.compile_results.get(submission_id) is None):
                 self.queue.put(_job)
             else:
+                net_mode = self.network_controller.get_network_mode(
+                    submission_id)
                 task_info = submission_config.tasks[_job.task_id]
                 case_no = f"{_job.task_id:02d}{_job.case_id:02d}"
                 logger().info(
