@@ -10,6 +10,7 @@ import requests
 from .config import BACKEND_API, SANDBOX_TOKEN, TESTDATA_ROOT
 from .testdata import fetch_problem_asset
 from .utils import get_redis_client, logger
+from .file_manager import _safe_extract_zip
 
 ASSET_FILENAME_MAP = {
     "checker": "custom_checker.py",
@@ -17,6 +18,7 @@ ASSET_FILENAME_MAP = {
     "makefile": "makefile.zip",
     "resource_data": "resource_data.zip",
     "resource_data_teacher": "resource_data_teacher.zip",
+    "network_dockerfile": "Dockerfiles.zip"
 }
 
 
@@ -137,9 +139,10 @@ def ensure_extracted_resource(
     Uses Redis lock to prevent concurrent extraction.
     Returns extracted/ directory path, or None if asset not configured.
     
-    asset_type: "resource_data" | "resource_data_teacher"
+    asset_type: "resource_data" | "resource_data_teacher" | "network_dockerfile"
     """
-    if asset_type not in ("resource_data", "resource_data_teacher"):
+    if asset_type not in ("resource_data", "resource_data_teacher",
+                          "network_dockerfile"):
         raise ValueError(f"invalid asset_type for extraction: {asset_type}")
 
     # First ensure the zip file is up-to-date
@@ -194,7 +197,11 @@ def ensure_extracted_resource(
 
         try:
             with zipfile.ZipFile(zip_path) as zf:
-                zf.extractall(extracted_dir)
+                # 原本的寫法使用 zf.extractall(extracted_dir)
+                # 這在解壓縮時，沒有驗證壓縮包內部的路徑合法性，容易造成 ZIP 路徑穿越（Zip Slip）安全漏洞
+                # _safe_extract_zip 則應該是在解壓前有做過安全檢查，確保檔案不會被寫到目標目錄外
+                # 因此建議取代成 _safe_extract_zip 來避免安全問題
+                _safe_extract_zip(zf, extracted_dir)
         except Exception as exc:
             logger().error(
                 "failed to extract resource [problem_id=%s, asset_type=%s]: %s",

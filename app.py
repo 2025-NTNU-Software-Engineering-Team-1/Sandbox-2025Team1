@@ -12,7 +12,10 @@ from dispatcher.testdata import (
 )
 from dispatcher.config import SANDBOX_TOKEN, SUBMISSION_DIR
 
-logging.basicConfig(filename="logs/sandbox.log")
+logging.basicConfig(
+    filename="logs/sandbox.log",
+    level=logging.DEBUG,
+)
 app = Flask(__name__)
 if __name__ != "__main__":
     # let flask app use gunicorn's logger
@@ -20,6 +23,9 @@ if __name__ != "__main__":
     app.logger.handlers = gunicorn_logger.handlers
     app.logger.setLevel(gunicorn_logger.level)
     logging.getLogger().setLevel(gunicorn_logger.level)
+
+    app.logger.setLevel(logging.DEBUG)
+    logging.getLogger().setLevel(logging.DEBUG)
 logger = app.logger
 
 # setup dispatcher
@@ -91,3 +97,8 @@ def status():
             "running": DISPATCHER.do_run,
         })
     return jsonify(ret), 200
+
+
+# for local debug
+# if __name__ == "__main__":
+#     app.run(host="0.0.0.0", port=5000, debug=True)

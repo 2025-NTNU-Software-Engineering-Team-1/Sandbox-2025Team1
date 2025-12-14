@@ -12,7 +12,7 @@ from runner.submission import SubmissionRunner
 from runner.interactive_runner import InteractiveRunner
 from . import job, file_manager, config
 from .exception import *
-from .meta import Meta
+from .meta import Meta, Sidecar
 from .constant import BuildStrategy, ExecutionMode, Language, SubmissionMode
 from .build_strategy import (
     BuildPlan,
@@ -36,6 +36,7 @@ from .resource_data import (
     copy_teacher_resource_for_case,
     prepare_teacher_for_case,
 )
+from .network_control import NetworkController
 
 
 class Dispatcher(threading.Thread):
@@ -50,18 +51,12 @@ class Dispatcher(threading.Thread):
         # read config
         queue_limit, container_limit = config.get_dispatcher_limits(
             dispatcher_config)
-        # flag to decided whether the thread should run
         self.do_run = True
-        # submission location
         self.SUBMISSION_DIR = config.SUBMISSION_DIR
-        # task queue
-        # type Queue[Tuple[submission_id, task_no]]
         self.MAX_TASK_COUNT = queue_limit
         self.queue = queue.Queue(self.MAX_TASK_COUNT)
-        # task result
-        # type: Dict[submission_id, Tuple[submission_info, List[result]]]
         self.result = {}
-        # threading locks for each submission
+        # Lock
         self.locks = {}
         self.compile_locks = {}
         self.compile_results = {}
@@ -70,7 +65,8 @@ class Dispatcher(threading.Thread):
         self.MAX_CONTAINER_SIZE = container_limit
         self.container_count_lock = threading.Lock()
         self.container_count = 0
-        # read cwd from submission runner config
+
+        # Configs
         s_config = config.get_submission_config(submission_config)
         self.submission_runner_cwd = pathlib.Path(s_config["working_dir"])
         self.docker_url = s_config.get("docker_url",
@@ -84,11 +80,26 @@ class Dispatcher(threading.Thread):
         self.checker_payloads = {}
         self.timeout = 300
         self.created_at = {}
+
+        # [Network] init
+        docker_url = s_config.get("docker_url", "unix://var/run/docker.sock")
+        self.network_controller = NetworkController(
+            docker_url=docker_url,
+            submission_dir=self.SUBMISSION_DIR,
+        )
+        # [Network] end
+
+        # Build Strategy related
         self.prebuilt_submissions = set()
         self.build_strategies = {}
         self.build_plans = {}
         self.build_locks = {}
+
+        # [Static Analysis] init
         self.sa_payloads = {}
+        self.submission_resources = {}
+        self.pending_tasks = {}
+        # [Static Analysis] end
         self.artifact_collector = ArtifactCollector(
             backend_url=config.BACKEND_API,
             token=config.SANDBOX_TOKEN,
@@ -124,8 +135,9 @@ class Dispatcher(threading.Thread):
     def is_timed_out(self, submission_id: str):
         if not self.contains(submission_id):
             return False
-        delta = (datetime.now() - self.created_at[submission_id]).seconds
-        return delta > self.timeout
+        delta = datetime.now() - self.created_at[submission_id]
+        # valid minus seconds
+        return delta.total_seconds() > self.timeout
 
     def prepare_submission_dir(
         self,
@@ -154,11 +166,45 @@ class Dispatcher(threading.Thread):
             else:
                 raise
 
+    # [Static Analysis] If SA is failed, mark CE for all cases
+    def _handle_sa_failure(self, submission_id: str, payload: dict,
+                           task_content: dict):
+        logger().warning(
+            f"Static analysis failed for {submission_id}, marking CE")
+        if self.contains(submission_id):
+            if payload:
+                self.sa_payloads[submission_id] = payload
+            meta, _ = self.result[submission_id]
+            self.result[submission_id] = (meta, task_content)
+
+            # END all cases with CE
+            self.on_submission_complete(submission_id)
+
+    # [Static Analysis] end
+
+    # [Network] Handle Network Setup Failure
+    def _handle_network_failure(self, submission_id, error_msg):
+        fail_content = build_sa_ce_task_content(
+            self.result[submission_id][0],
+            f"Network Setup Failed: {error_msg}")
+        self.result[submission_id] = (self.result[submission_id][0],
+                                      fail_content)
+        self.on_submission_complete(submission_id)
+
+    # [Network] end
+
+    # Helper methods for Build Strategy
     def _is_prebuilt_submission(self, submission_id: str) -> bool:
         return submission_id in self.prebuilt_submissions
 
     def _is_build_pending(self, submission_id: str) -> bool:
         return submission_id in self.build_plans
+
+    # [Static Analysis] To check SA is done or not
+    def _is_sa_pending(self, submission_id: str) -> bool:
+        return submission_id in self.pending_tasks
+
+    # [Static Analysis] end
 
     def _clear_submission_jobs(self, submission_id: str):
         pending = []
@@ -434,7 +480,6 @@ class Dispatcher(threading.Thread):
         return scoring_payload, status_override
 
     def _handle_build_failure(self, submission_id: str, message: str):
-        """Handle build/make failure by clearing queue and finalizing as CE."""
         err_msg = message or "build failed"
         logger().warning(f"build failed [id={submission_id}]: {err_msg}")
         self.build_plans.pop(submission_id, None)
@@ -464,8 +509,6 @@ class Dispatcher(threading.Thread):
         submission_path: pathlib.Path,
     ) -> BuildPlan:
         strategy = BuildStrategy(meta.buildStrategy)
-        # Run the build helper for this submission so dispatcher can decide
-        # whether compile jobs are still needed.
         logger().info(
             f"[build] submission={submission_id} strategy={strategy.name}")
         if strategy == BuildStrategy.COMPILE:
@@ -490,25 +533,23 @@ class Dispatcher(threading.Thread):
         raise BuildStrategyError(f"unsupported build strategy: {strategy}")
 
     def handle(self, submission_id: str, problem_id: int):
-        """
-        handle a submission, save its config and push into task queue
-        """
         logger().info(
             f"receive submission {submission_id} for problem: {problem_id}.")
         submission_path = self.SUBMISSION_DIR / submission_id
-        # check whether the submission directory exist
         if not submission_path.exists():
             raise FileNotFoundError(
                 f"submission id: {submission_id} file not found.")
         elif not submission_path.is_dir():
             raise NotADirectoryError(f"{submission_path} is not a directory")
-        # duplicated
         if self.contains(submission_id):
             raise DuplicatedSubmissionIdError(
                 f"duplicated submission id {submission_id}.")
-        # read submission meta
+
         with (submission_path / "meta.json").open() as f:
             submission_config = Meta.parse_obj(json.load(f))
+        logger().debug(f"(*_*)[In handle]submission meta: {submission_config}")
+
+        # [Result Init]
 
         submission_mode = SubmissionMode(submission_config.submissionMode)
         is_zip_mode = submission_mode == SubmissionMode.ZIP
@@ -597,6 +638,8 @@ class Dispatcher(threading.Thread):
         self.created_at[submission_id] = datetime.now()
         self.build_strategies[submission_id] = submission_config.buildStrategy
         logger().debug(f"current submissions: {[*self.result.keys()]}")
+
+        # [Build Strategy Plan]
         try:
             build_plan = self._prepare_with_build_strategy(
                 submission_id=submission_id,
@@ -615,12 +658,20 @@ class Dispatcher(threading.Thread):
             )
             self.on_submission_complete(submission_id)
             return
+
+        # [Static Analysis] init array for pending work
+        tasks_to_run = []
+
         needs_build = build_plan.needs_make
         if needs_build:
-            logger().debug(f"[build] submission={submission_id} queued")
+            # Wait for SA before building
+            logger().debug(
+                f"[build] submission={submission_id} planned to build, waiting for SA"
+            )
             self.build_plans[submission_id] = build_plan
             self.build_locks[submission_id] = threading.Lock()
-            self.queue.put_nowait(job.Build(submission_id=submission_id))
+            tasks_to_run.append(job.Build(submission_id=submission_id))
+
         else:
             if build_plan.finalize:
                 build_plan.finalize()
@@ -629,30 +680,38 @@ class Dispatcher(threading.Thread):
                     f"[build] submission={submission_id} marked prebuilt")
                 self.prebuilt_submissions.add(submission_id)
 
-        logger().debug(f"current submissions: {[*self.result.keys()]}")
-        try:
-            if (not needs_build
-                    and not self._is_prebuilt_submission(submission_id)
-                    and self.compile_need(submission_config.language)):
-                self.queue.put_nowait(job.Compile(submission_id=submission_id))
-            for i, task in enumerate(submission_config.tasks):
-                for j in range(task.caseCount):
-                    case_no = f"{i:02d}{j:02d}"
-                    task_content[case_no] = None
-                    _job = job.Execute(
+        # Prepare pending tasks
+        # [Job Dispatching]
+        if (not needs_build and not self._is_prebuilt_submission(submission_id)
+                and self.compile_need(submission_config.language)):
+            tasks_to_run.append(job.Compile(submission_id=submission_id))
+
+        for i, task in enumerate(submission_config.tasks):
+            for j in range(task.caseCount):
+                case_no = f"{i:02d}{j:02d}"
+                task_content[case_no] = None
+                tasks_to_run.append(
+                    job.Execute(
                         submission_id=submission_id,
                         task_id=i,
                         case_id=j,
-                    )
-                    self.queue.put_nowait(_job)
+                    ))
+        self.pending_tasks[submission_id] = tasks_to_run
+        try:
+            logger().info(
+                f"!!! DEBUG MODE: Skipping SA, going straight to Network Setup for {submission_id} !!!"
+            )
+            self.queue.put_nowait(
+                job.NetworkSetup(submission_id=submission_id,
+                                 problem_id=problem_id))
+
+            # self.queue.put_nowait(job.StaticAnalysis(submission_id=submission_id))
         except queue.Full as e:
             self.release(submission_id)
             raise e
+        # [Static Analysis] end
 
     def release(self, submission_id: str):
-        """
-        Release variable about submission
-        """
         for v in (
                 self.result,
                 self.compile_locks,
@@ -663,10 +722,19 @@ class Dispatcher(threading.Thread):
         ):
             if submission_id in v:
                 del v[submission_id]
+        # [Static Analysis] Cleanup
+        self.sa_payloads.pop(submission_id, None)
+        self.pending_tasks.pop(submission_id, None)
+        # [Static Analysis] end
+
         self.prebuilt_submissions.discard(submission_id)
         self.build_strategies.pop(submission_id, None)
         self.build_plans.pop(submission_id, None)
         self.build_locks.pop(submission_id, None)
+
+        # [Network] Cleanup
+        self.network_controller.cleanup(submission_id)
+        # [Network] end
         self.sa_payloads.pop(submission_id, None)
         self.custom_checker_info.pop(submission_id, None)
         self.custom_scorer_info.pop(submission_id, None)
@@ -703,11 +771,105 @@ class Dispatcher(threading.Thread):
                 continue
             # get task info
             submission_config, _ = self.result[submission_id]
-            if not isinstance(
-                    _job, job.Build) and self._is_build_pending(submission_id):
+
+            # [Static Analysis] Handle Static Analysis Job
+            if isinstance(_job, job.StaticAnalysis):
+                logger().info(f"Running Static Analysis for {submission_id}")
+                submission_path = self.SUBMISSION_DIR / submission_id
+
+                try:
+                    rules_json = fetch_problem_rules(_job.problem_id)
+                    logger().debug(
+                        f"fetched static analysis rules: {rules_json}")
+                    is_zip_mode = (SubmissionMode(
+                        submission_config.submissionMode) == SubmissionMode.ZIP
+                                   )
+
+                    # do SA
+                    success, payload, task_content = run_static_analysis(
+                        submission_id=submission_id,
+                        submission_path=submission_path,
+                        meta=submission_config,
+                        rules_json=rules_json,
+                        is_zip_mode=is_zip_mode,
+                    )
+                    if payload:
+                        self.sa_payloads[submission_id] = payload
+                    if success:
+                        logger().info(
+                            f"Static Analysis succeeded for {submission_id}.  Releasing pending jobs."
+                        )
+                        # pending_jobs = self.pending_tasks.pop(submission_id, [])
+                        # for pj in pending_jobs:
+                        #     self.queue.put(pj)
+                        self.queue.put(
+                            job.NetworkSetup(submission_id=submission_id))
+                    else:
+                        logger().info(
+                            f"Static Analysis failed for {submission_id}. Marking CE for all cases."
+                        )
+                        self._handle_sa_failure(
+                            submission_id=submission_id,
+                            payload=payload,
+                            task_content=task_content,
+                        )
+                except Exception as e:
+                    logger().error(f"Error in SA job for {submission_id}: {e}",
+                                   exc_info=True)
+                    msg = f"Static Analysis Exception: {e}"
+                    fail_content = build_sa_ce_task_content(
+                        submission_config,
+                        msg,
+                    )
+                    self._handle_sa_failure(
+                        submission_id,
+                        {
+                            "status": "sys_err",
+                            "message": msg
+                        },
+                        fail_content,
+                    )
+                continue
+            # [Static Analysis] end
+
+            # [Network] Determine Network Mode
+            if isinstance(_job, job.NetworkSetup):
+                logger().info(f"Setting up network for {submission_id}")
+                submission_config, _ = self.result[submission_id]
+                logger().debug(
+                    f"(*_*)[In NetworkSetup] submission meta: {submission_config}"
+                )
+
+                try:
+                    self.network_controller.provision_network(
+                        submission_id=submission_id,
+                        problem_id=_job.problem_id,
+                    )
+                    pending_jobs = self.pending_tasks.pop(submission_id, [])
+                    for pj in pending_jobs:
+                        self.queue.put(pj)
+
+                except Exception as e:
+                    logger().error(f"Network provision failed: {e}")
+                    self._handle_network_failure(submission_id, str(e))
+                continue
+            # [Network] end
+
+            # 1. Build Job
+            if isinstance(_job, job.Build):
+                threading.Thread(
+                    target=self.build,
+                    args=(submission_id, submission_config.language),
+                ).start()
+                continue
+
+            # Wait for build if needed
+            if self._is_build_pending(submission_id):
                 self.queue.put(_job)
                 time.sleep(0.1)
                 continue
+
+            # 2. Compile Job
             if isinstance(_job, job.Compile):
                 threading.Thread(
                     target=self.compile,
@@ -722,12 +884,14 @@ class Dispatcher(threading.Thread):
                     args=(submission_id, submission_config.language),
                 ).start()
                 continue
-            # if this submission needs compile and it haven't finished
+            # 3. Execution Job
             elif (not self._is_prebuilt_submission(submission_id)
                   and self.compile_need(submission_config.language)
                   and self.compile_results.get(submission_id) is None):
                 self.queue.put(_job)
             else:
+                net_mode = self.network_controller.get_network_mode(
+                    submission_id)
                 task_info = submission_config.tasks[_job.task_id]
                 case_no = f"{_job.task_id:02d}{_job.case_id:02d}"
                 logger().info(
@@ -739,6 +903,7 @@ class Dispatcher(threading.Thread):
                 # input path should be the host path
                 base_path = self.submission_runner_cwd / submission_id / "testcase"
                 in_path = str((base_path / f"{case_no}.in").absolute())
+
                 # debug log
                 logger().debug("in path: " + in_path)
                 logger().debug("out path: " + out_path)
@@ -755,29 +920,28 @@ class Dispatcher(threading.Thread):
                         submission_config.language,
                         submission_config.executionMode,
                         submission_config.teacherFirst,
+                        net_mode,  # [Sidecar] Pass network mode
                     ),
                 ).start()
 
     def stop(self):
         self.do_run = False
 
+    # [Standard Methods]
     def compile(
         self,
         submission_id: str,
         lang: Language,
     ):
-        # another thread is compiling this submission, bye
         if self.compile_locks[submission_id].locked():
             logger().error(
                 f"start a compile thread on locked submission {submission_id}")
             return
-        # this submission should not be compiled!
         if not self.compile_need(lang):
             logger().warning(
                 f"try to compile submission {submission_id}"
                 f" with language {lang}", )
             return
-        # compile this submission. don't forget to acquire the lock
         with self.compile_locks[submission_id]:
             logger().info(f"start compiling {submission_id}")
             res = SubmissionRunner(
@@ -823,6 +987,7 @@ class Dispatcher(threading.Thread):
             logger().error(
                 f"start a build thread on locked submission {submission_id}")
             return
+
         with lock:
             logger().info(f"start building {submission_id}")
             runner = SubmissionRunner(
@@ -887,6 +1052,7 @@ class Dispatcher(threading.Thread):
         lang: Language,
         execution_mode: ExecutionMode,
         teacher_first: bool = False,
+        network_mode: str = "none",
     ):
         lang_key = ["c11", "cpp17", "python3"][int(lang)]
         submission_path = self.SUBMISSION_DIR / submission_id
@@ -1072,6 +1238,7 @@ class Dispatcher(threading.Thread):
                     case_dir=case_dir,
                     student_allow_write=student_allow_write,
                     teacher_case_dir=teacher_case_dir,
+                    network_mode=network_mode,  # Pass to InteractiveRunner
                 )
                 try:
                     self.inc_container()
@@ -1092,12 +1259,12 @@ class Dispatcher(threading.Thread):
                 case_in_path,
                 case_out_path,
                 lang=lang_key,
+                network_mode=network_mode,
                 common_dir=str(common_dir),
                 case_dir=str(case_dir),
                 allow_write=bool(getattr(meta_obj, "allowWrite", False)),
             )
             res = self.extract_compile_result(submission_id, lang)
-            # Execute if compile successfully
             if res["Status"] != "CE":
                 try:
                     self.inc_container()
@@ -1197,11 +1364,6 @@ class Dispatcher(threading.Thread):
                     exc,
                 )
         logger().info(f"finish task {submission_id}/{case_no}")
-        # truncate long stdout/stderr
-        _res = res.copy()
-        for k in ("Stdout", "Stderr"):
-            _res[k] = textwrap.shorten(_res.get(k, ""), 37, placeholder="...")
-        logger().debug(f"runner result: {_res}")
         with self.locks[submission_id]:
             self.on_case_complete(
                 submission_id=submission_id,
@@ -1213,6 +1375,7 @@ class Dispatcher(threading.Thread):
                 mem_usage=res.get("MemUsage", -1),
                 prob_status=res["Status"],
             )
+
         try:
             if case_dir.exists():
                 shutil.rmtree(case_dir)
@@ -1240,18 +1403,17 @@ class Dispatcher(threading.Thread):
         stdout: str,
         stderr: str,
         exit_code: int,
-        exec_time: int,
+        exec_time: float,
         mem_usage: int,
         prob_status: str,
     ):
-        # if id not exists
         if submission_id not in self.result:
             raise SubmissionIdNotFoundError(
                 f"Unexisted id {submission_id} recieved")
-        # update case result
+
         _, results = self.result[submission_id]
         if case_no not in results:
-            raise ValueError(f"{submission_id}/{case_no} not found.")
+            raise ValueError(f"Unexisted case {case_no} recieved")
         results[case_no] = {
             "stdout": stdout,
             "stderr": stderr,
@@ -1260,7 +1422,6 @@ class Dispatcher(threading.Thread):
             "memoryUsage": mem_usage,
             "status": prob_status,
         }
-        # check completion
         _results = [k for k, v in results.items() if not v]
         logger().debug(f"tasks wait for judge: {_results}")
         if all(results.values()):
@@ -1286,7 +1447,7 @@ class Dispatcher(threading.Thread):
             if task_no not in submission_result:
                 submission_result[task_no] = {}
             submission_result[task_no][case_no] = r
-        # convert to list and check
+
         for task_no, cases in submission_result.items():
             assert [*cases.keys()] == [*range(len(cases))]
             submission_result[task_no] = [*cases.values()]
@@ -1303,7 +1464,7 @@ class Dispatcher(threading.Thread):
 
         submission_data = {
             "tasks": submission_result,
-            "token": config.SANDBOX_TOKEN
+            "token": config.SANDBOX_TOKEN,
         }
         if sa_payload is not None:
             submission_data["staticAnalysis"] = sa_payload
@@ -1366,6 +1527,5 @@ class Dispatcher(threading.Thread):
             rules = fetch_problem_rules(problem_id)
             return rules
         except Exception as e:
-            logger().warning(
-                f"Do not fetch problem rules. [problem_id: {problem_id}] {e}")
-            return None
+            logger().info(
+                f"Report to backend failed (Expected in local test): {e}")

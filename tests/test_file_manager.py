@@ -109,9 +109,11 @@ def test_extract_zip_python_skips_makefile_requirement(tmp_path):
 
 
 def test_function_only_rejects_zip_submission(tmp_path):
-    meta = _build_meta(SubmissionMode.ZIP,
-                       execution_mode=ExecutionMode.FUNCTION_ONLY,
-                       build_strategy=BuildStrategy.MAKE_FUNCTION_ONLY)
+    meta = _build_meta(
+        SubmissionMode.ZIP,
+        execution_mode=ExecutionMode.FUNCTION_ONLY,
+        build_strategy=BuildStrategy.MAKE_FUNCTION_ONLY,
+    )
     testdata_root = tmp_path / "testdata"
     _prepare_testdata(testdata_root)
     archive = _build_zip({

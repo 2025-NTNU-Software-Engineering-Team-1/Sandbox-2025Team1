@@ -5,7 +5,7 @@ from dispatcher.dispatcher import Dispatcher
 from runner.submission import SubmissionRunner
 from tests.submission_generator import SubmissionGenerator
 
-TEST_CONFIG_PATH = '.config/dispatcher.test.json'
+TEST_CONFIG_PATH = ".config/dispatcher.test.json"
 
 
 @pytest.fixture
@@ -21,7 +21,7 @@ def docker_dispatcher(tmp_path):
 
 @pytest.fixture
 def submission_generator(tmp_path):
-    generator = SubmissionGenerator(submission_path=tmp_path / 'submissions')
+    generator = SubmissionGenerator(submission_path=tmp_path / "submissions")
     generator.gen_all()
 
     yield generator
@@ -47,6 +47,10 @@ def TestSubmissionRunner(tmp_path):
             testdata_output_path,
             special_judge=False,
             lang=None,
+            network_mode="none",
+            allow_write=False,
+            common_dir=None,
+            case_dir=None,
         ):
             base_workdir = tmp_path / "submissions"
             super().__init__(
@@ -57,6 +61,8 @@ def TestSubmissionRunner(tmp_path):
                 testdata_output_path,
                 special_judge=special_judge,
                 lang=lang,
+                network_mode=network_mode,
+                allow_write=allow_write,
                 common_dir=str(base_workdir / submission_id / "src" /
                                "common"),
                 case_dir=str(base_workdir / submission_id / "src" / "common"),

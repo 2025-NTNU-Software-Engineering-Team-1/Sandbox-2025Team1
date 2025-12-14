@@ -3,6 +3,7 @@ import os
 import shutil
 import zipfile
 import logging
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional
@@ -310,6 +311,7 @@ def _prepare_teacher_artifacts(meta: Meta,
         except Exception:
             try:
                 import shutil
+
                 shutil.copy(binary, main_exec)
             except Exception:
                 pass
@@ -323,8 +325,8 @@ def _prepare_teacher_artifacts(meta: Meta,
 
 def _resolve_teacher_lang(meta: Meta, teacher_dir: Path) -> Language:
     # priority: assetPaths.teacherLang -> file suffix -> meta.language
-    teacher_lang_val = meta.assetPaths.get("teacherLang") if getattr(
-        meta, "assetPaths", None) else None
+    teacher_lang_val = (meta.assetPaths.get("teacherLang") if getattr(
+        meta, "assetPaths", None) else None)
     if isinstance(teacher_lang_val, str):
         mapping = {"c": Language.C, "cpp": Language.CPP, "py": Language.PY}
         if teacher_lang_val in mapping:

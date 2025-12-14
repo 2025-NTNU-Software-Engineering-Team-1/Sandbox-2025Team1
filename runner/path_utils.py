@@ -14,11 +14,11 @@ class PathTranslator:
         cfg_path = config_path or os.getenv("SUBMISSION_CONFIG")
         self.cfg = dispatcher_config.get_submission_config(cfg_path)
         self.working_dir = Path(self.cfg["working_dir"]).expanduser()
-        self.sandbox_root = Path(
+        self.sandbox_root = (Path(
             self.cfg.get("sandbox_root",
-                         self.working_dir.parent)).expanduser().resolve()
-        self.host_root = Path(self.cfg.get(
-            "host_root", self.sandbox_root)).expanduser().resolve()
+                         self.working_dir.parent)).expanduser().resolve())
+        self.host_root = (Path(self.cfg.get(
+            "host_root", self.sandbox_root)).expanduser().resolve())
 
     def to_host(self, path: str | Path) -> Path:
         """

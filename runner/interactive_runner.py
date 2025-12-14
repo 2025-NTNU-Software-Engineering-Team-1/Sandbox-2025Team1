@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-import docker
+import docker  # type: ignore
 from runner.path_utils import PathTranslator
 
 
@@ -23,6 +23,7 @@ class InteractiveRunner:
     case_dir: Path | None = None
     student_allow_write: bool = False
     teacher_case_dir: Path | None = None  # teacher/cases/{case_id}/ directory
+    network_mode: str = "none"
 
     def run(self) -> dict:
         translator = PathTranslator()
@@ -72,7 +73,7 @@ class InteractiveRunner:
         }
         host_config = client.create_host_config(
             binds=binds,
-            network_mode="none",
+            network_mode=self.network_mode,
             mem_limit=f"{max(self.mem_limit,0)}k",
             tmpfs={"/tmp": "rw,noexec,nosuid"},
         )

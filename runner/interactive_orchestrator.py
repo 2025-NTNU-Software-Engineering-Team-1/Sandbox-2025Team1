@@ -105,6 +105,7 @@ def _read_result(path: Path):
 
 def _parse_check_result(path: Path):
     MAX_MESSAGE_LENGTH = 1024  # avoid leaking excessive info
+    MAX_MESSAGE_LENGTH = 1024  # avoid leaking excessive info
     if not path.exists():
         return None, "Check_Result not found"
     status = None
@@ -152,10 +153,15 @@ def _dir_file_count(path: Path) -> int:
     return count
 
 
-def _setup_secure_permissions(teacher_dir: Path, student_dir: Path,
-                              teacher_uid: int, student_uid: int,
-                              sandbox_gid: int, student_allow_read: bool,
-                              student_allow_write: bool):
+def _setup_secure_permissions(
+    teacher_dir: Path,
+    student_dir: Path,
+    teacher_uid: int,
+    student_uid: int,
+    sandbox_gid: int,
+    student_allow_read: bool,
+    student_allow_write: bool,
+):
     """Ensure teacher dir owned by teacher UID (unreadable to student), student dir owned by student UID."""
     logger = logging.getLogger(__name__)
     try:
@@ -389,7 +395,7 @@ def orchestrate(args: argparse.Namespace):
         env_student.pop("SANDBOX_ALLOW_READ", None)
     env_teacher["SANDBOX_UID"] = str(teacher_uid)
     env_teacher["SANDBOX_GID"] = str(sandbox_gid)
-    # only teacher可寫檔
+    # only teacher
     env_teacher["SANDBOX_ALLOW_WRITE"] = "1"
     # testcase.in is pre-copied to teacher_dir by Dispatcher
     # Set CASE_PATH environment variable for sandbox
