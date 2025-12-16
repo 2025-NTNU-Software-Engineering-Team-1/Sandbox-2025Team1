@@ -3,7 +3,7 @@ import os
 import time
 import logging
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 from zipfile import ZipFile
 
 import requests
@@ -218,8 +218,8 @@ class ArtifactCollector:
         return res
 
     def _diff(self, before: Dict[str, os.stat_result],
-              after: Dict[str, os.stat_result]) -> Dict[str, Path]:
-        changed: Dict[str, Path] = {}
+              after: Dict[str, os.stat_result]) -> Set[str]:
+        """Return set of relative paths that changed between snapshots."""
         for rel, st in after.items():
             prev = before.get(rel)
             if prev is None or (st.st_mtime, st.st_size) != (prev.st_mtime,

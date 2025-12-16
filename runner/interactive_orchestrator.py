@@ -105,7 +105,6 @@ def _read_result(path: Path):
 
 def _parse_check_result(path: Path):
     MAX_MESSAGE_LENGTH = 1024  # avoid leaking excessive info
-    MAX_MESSAGE_LENGTH = 1024  # avoid leaking excessive info
     if not path.exists():
         return None, "Check_Result not found"
     status = None

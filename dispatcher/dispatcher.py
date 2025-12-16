@@ -12,7 +12,7 @@ from runner.submission import SubmissionRunner
 from runner.interactive_runner import InteractiveRunner
 from . import job, file_manager, config
 from .exception import *
-from .meta import Meta, Sidecar
+from .meta import Meta
 from .constant import BuildStrategy, ExecutionMode, Language, SubmissionMode
 from .build_strategy import (
     BuildPlan,
@@ -33,8 +33,8 @@ from .resource_data import (
     prepare_resource_data,
     prepare_teacher_resource_data,
     copy_resource_for_case,
-    copy_teacher_resource_for_case,
     prepare_teacher_for_case,
+    cleanup_resource_files,
 )
 from .network_control import NetworkController
 
@@ -192,6 +192,25 @@ class Dispatcher(threading.Thread):
         self.on_submission_complete(submission_id)
 
     # [Network] end
+
+    def _mark_submission_je(self, submission_id: str, message: str):
+        """Mark all cases of a submission as JE (Judge Error)."""
+        logger().warning(
+            f"Marking submission JE [id={submission_id}]: {message}")
+        if not self.contains(submission_id):
+            return
+        meta, task_content = self.result[submission_id]
+        for case_no in task_content:
+            task_content[case_no] = {
+                "stdout": "",
+                "stderr": message,
+                "exitCode": 1,
+                "execTime": -1,
+                "memoryUsage": -1,
+                "status": "JE",
+            }
+        self.result[submission_id] = (meta, task_content)
+        self.on_submission_complete(submission_id)
 
     # Helper methods for Build Strategy
     def _is_prebuilt_submission(self, submission_id: str) -> bool:
@@ -552,29 +571,9 @@ class Dispatcher(threading.Thread):
         # [Result Init]
 
         submission_mode = SubmissionMode(submission_config.submissionMode)
-        is_zip_mode = submission_mode == SubmissionMode.ZIP
         self.problem_ids[submission_id] = problem_id
 
-        # [Start] static analysis
-        rules_json = fetch_problem_rules(problem_id)
-        success, payload, task_content = run_static_analysis(
-            submission_id=submission_id,
-            submission_path=submission_path,
-            meta=submission_config,
-            rules_json=rules_json,
-            is_zip_mode=is_zip_mode,
-        )
-        if payload:
-            self.sa_payloads[submission_id] = payload
-        if rules_json and not success:
-            self.result[submission_id] = (
-                submission_config,
-                task_content or build_sa_ce_task_content(
-                    submission_config, "Static Analysis Not Passed"),
-            )
-            self.on_submission_complete(submission_id)
-            return
-        # [End] static analysis
+        # Note: Static Analysis is now handled asynchronously in run() via job.StaticAnalysis
 
         # prepare custom checker if enabled (non-interactive only)
         self._prepare_custom_checker(
@@ -698,14 +697,9 @@ class Dispatcher(threading.Thread):
                     ))
         self.pending_tasks[submission_id] = tasks_to_run
         try:
-            logger().info(
-                f"!!! DEBUG MODE: Skipping SA, going straight to Network Setup for {submission_id} !!!"
-            )
             self.queue.put_nowait(
-                job.NetworkSetup(submission_id=submission_id,
-                                 problem_id=problem_id))
-
-            # self.queue.put_nowait(job.StaticAnalysis(submission_id=submission_id))
+                job.StaticAnalysis(submission_id=submission_id,
+                                   problem_id=problem_id))
         except queue.Full as e:
             self.release(submission_id)
             raise e
@@ -735,7 +729,6 @@ class Dispatcher(threading.Thread):
         # [Network] Cleanup
         self.network_controller.cleanup(submission_id)
         # [Network] end
-        self.sa_payloads.pop(submission_id, None)
         self.custom_checker_info.pop(submission_id, None)
         self.custom_scorer_info.pop(submission_id, None)
         self.checker_payloads.pop(submission_id, None)
@@ -803,7 +796,8 @@ class Dispatcher(threading.Thread):
                         # for pj in pending_jobs:
                         #     self.queue.put(pj)
                         self.queue.put(
-                            job.NetworkSetup(submission_id=submission_id))
+                            job.NetworkSetup(submission_id=submission_id,
+                                             problem_id=_job.problem_id))
                     else:
                         logger().info(
                             f"Static Analysis failed for {submission_id}. Marking CE for all cases."
@@ -878,16 +872,12 @@ class Dispatcher(threading.Thread):
                         submission_config.language,
                     ),
                 ).start()
-            elif isinstance(_job, job.Build):
-                threading.Thread(
-                    target=self.build,
-                    args=(submission_id, submission_config.language),
-                ).start()
                 continue
+
             # 3. Execution Job
-            elif (not self._is_prebuilt_submission(submission_id)
-                  and self.compile_need(submission_config.language)
-                  and self.compile_results.get(submission_id) is None):
+            if (not self._is_prebuilt_submission(submission_id)
+                    and self.compile_need(submission_config.language)
+                    and self.compile_results.get(submission_id) is None):
                 self.queue.put(_job)
             else:
                 net_mode = self.network_controller.get_network_mode(
@@ -1247,7 +1237,6 @@ class Dispatcher(threading.Thread):
                     self.dec_container()
                 if copied_resources:
                     try:
-                        from dispatcher.resource_data import cleanup_resource_files
                         cleanup_resource_files(case_dir, copied_resources)
                     except Exception:
                         pass
@@ -1273,14 +1262,12 @@ class Dispatcher(threading.Thread):
                     self.dec_container()
                 if copied_resources:
                     try:
-                        from dispatcher.resource_data import cleanup_resource_files
                         cleanup_resource_files(case_dir, copied_resources)
                     except Exception:
                         pass
             else:
                 if copied_resources:
                     try:
-                        from dispatcher.resource_data import cleanup_resource_files
                         cleanup_resource_files(case_dir, copied_resources)
                     except Exception:
                         pass

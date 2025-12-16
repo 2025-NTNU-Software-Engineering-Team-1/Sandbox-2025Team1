@@ -36,7 +36,6 @@ def extract(
         raise ValueError("function-only submissions only accept code uploads")
     if submission_mode == SubmissionMode.ZIP:
         _extract_zip_source(common_dir, source, int(meta.language))
-        _extract_zip_source(common_dir, source, int(meta.language))
     else:
         _extract_code_source(common_dir, source, int(meta.language))
     # copy testdata (exclude checker, resource_data*, chaos subdirectories)

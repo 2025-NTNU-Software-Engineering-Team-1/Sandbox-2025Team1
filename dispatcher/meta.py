@@ -65,8 +65,6 @@ class Meta(BaseModel):
             v = mapping.get(v, v)
         return v
 
-    sidecars: List[Sidecar] = Field(default_factory=list)
-
     @validator("tasks")
     def validate_task(cls, v):
         if sum(t.taskScore for t in v) != 100:
