@@ -5,6 +5,7 @@ from typing import Dict, Optional, Tuple
 
 from .config import TESTDATA_ROOT
 from .asset_cache import ensure_custom_asset, AssetNotFoundError
+from .result_factory import make_scorer_result
 from runner.path_utils import PathTranslator
 from runner.custom_scorer_runner import CustomScorerRunner, CustomScorerError
 
@@ -58,22 +59,10 @@ def run_custom_scorer(
         result = runner.run(payload)
     except (CustomScorerError, CustomScorerSetupError) as exc:
         _cleanup(workdir)
-        return {
-            "status": "JE",
-            "score": 0,
-            "message": str(exc),
-            "stdout": "",
-            "stderr": "",
-        }
+        return make_scorer_result(status="JE", message=str(exc))
     except Exception as exc:
         _cleanup(workdir)
-        return {
-            "status": "JE",
-            "score": 0,
-            "message": str(exc),
-            "stdout": "",
-            "stderr": "",
-        }
+        return make_scorer_result(status="JE", message=str(exc))
     finally:
         _cleanup(workdir)
 
@@ -88,13 +77,10 @@ def _parse_scorer_output(raw: Dict[str, str]) -> Dict[str, object]:
     try:
         parsed = json.loads(stdout) if stdout else {}
     except Exception:
-        return {
-            "status": "JE",
-            "score": 0,
-            "message": "Invalid scorer output",
-            "stdout": stdout,
-            "stderr": stderr,
-        }
+        return make_scorer_result(status="JE",
+                                  message="Invalid scorer output",
+                                  stdout=stdout,
+                                  stderr=stderr)
 
     score = parsed.get("score", 0)
     message = parsed.get("message", "")

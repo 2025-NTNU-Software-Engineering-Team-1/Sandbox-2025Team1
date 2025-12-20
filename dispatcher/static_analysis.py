@@ -13,6 +13,7 @@ except ImportError:
 from dispatcher import config as dispatcher_config
 from .constant import Language
 from .utils import logger
+from .result_factory import make_all_cases_result
 
 if TYPE_CHECKING:
     from .meta import Meta
@@ -125,19 +126,8 @@ def format_sa_failure_message(message: str) -> str:
 
 
 def build_sa_ce_task_content(meta: "Meta", stderr: str) -> dict:
-    task_content = {}
-    for ti, task in enumerate(meta.tasks):
-        for ci in range(task.caseCount):
-            case_no = f"{ti:02d}{ci:02d}"
-            task_content[case_no] = {
-                "stdout": "",
-                "stderr": stderr,
-                "exitCode": 1,
-                "execTime": -1,
-                "memoryUsage": -1,
-                "status": "CE",
-            }
-    return task_content
+    """Build task content for CE (Compile Error) status for all cases."""
+    return make_all_cases_result(meta=meta, status="CE", stderr=stderr)
 
 
 def run_static_analysis(

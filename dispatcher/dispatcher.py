@@ -27,6 +27,7 @@ from .pipeline import fetch_problem_rules
 from .artifact_collector import ArtifactCollector
 
 from .static_analysis import run_static_analysis, build_sa_ce_task_content
+from .result_factory import make_runner_result, make_all_cases_result
 from .custom_checker import ensure_custom_checker, run_custom_checker_case
 from .custom_scorer import ensure_custom_scorer, run_custom_scorer
 from .resource_data import (
@@ -182,35 +183,30 @@ class Dispatcher(threading.Thread):
 
     # [Static Analysis] end
 
-    # [Network] Handle Network Setup Failure
-    def _handle_network_failure(self, submission_id, error_msg):
-        fail_content = build_sa_ce_task_content(
-            self.result[submission_id][0],
-            f"Network Setup Failed: {error_msg}")
-        self.result[submission_id] = (self.result[submission_id][0],
-                                      fail_content)
-        self.on_submission_complete(submission_id)
-
-    # [Network] end
-
-    def _mark_submission_je(self, submission_id: str, message: str):
-        """Mark all cases of a submission as JE (Judge Error)."""
+    def _mark_submission_failed(
+        self,
+        submission_id: str,
+        status: str,
+        message: str,
+    ):
+        """Mark all cases of a submission as failed (CE/JE)."""
         logger().warning(
-            f"Marking submission JE [id={submission_id}]: {message}")
+            f"Marking submission {status} [id={submission_id}]: {message}")
         if not self.contains(submission_id):
             return
-        meta, task_content = self.result[submission_id]
-        for case_no in task_content:
-            task_content[case_no] = {
-                "stdout": "",
-                "stderr": message,
-                "exitCode": 1,
-                "execTime": -1,
-                "memoryUsage": -1,
-                "status": "JE",
-            }
-        self.result[submission_id] = (meta, task_content)
+        meta, _ = self.result[submission_id]
+        self.result[submission_id] = (meta,
+                                      make_all_cases_result(meta=meta,
+                                                            status=status,
+                                                            stderr=message))
         self.on_submission_complete(submission_id)
+
+    # [Network] Handle Network Setup Failure
+    def _handle_network_failure(self, submission_id: str, error_msg: str):
+        self._mark_submission_failed(submission_id, "CE",
+                                     f"Network Setup Failed: {error_msg}")
+
+    # [Network] end
 
     # Helper methods for Build Strategy
     def _is_prebuilt_submission(self, submission_id: str) -> bool:
@@ -500,25 +496,13 @@ class Dispatcher(threading.Thread):
 
     def _handle_build_failure(self, submission_id: str, message: str):
         err_msg = message or "build failed"
-        logger().warning(f"build failed [id={submission_id}]: {err_msg}")
+        # Clean up build-specific resources
         self.build_plans.pop(submission_id, None)
         self.build_locks.pop(submission_id, None)
         self.prebuilt_submissions.discard(submission_id)
         self._clear_submission_jobs(submission_id)
-        if submission_id not in self.result:
-            return
-        _, task_content = self.result[submission_id]
-        failure_result = {
-            "stdout": "",
-            "stderr": err_msg,
-            "exitCode": 1,
-            "execTime": -1,
-            "memoryUsage": -1,
-            "status": "CE",
-        }
-        for case_no in task_content.keys():
-            task_content[case_no] = failure_result.copy()
-        self.on_submission_complete(submission_id)
+        # Mark submission as CE
+        self._mark_submission_failed(submission_id, "CE", err_msg)
 
     def _prepare_with_build_strategy(
         self,
@@ -613,18 +597,9 @@ class Dispatcher(threading.Thread):
                 submission_id,
                 exc,
             )
-            task_content = {}
-            for ti, task in enumerate(submission_config.tasks):
-                for ci in range(task.caseCount):
-                    case_no = f"{ti:02d}{ci:02d}"
-                    task_content[case_no] = {
-                        "stdout": "",
-                        "stderr": err_msg,
-                        "exitCode": 1,
-                        "execTime": -1,
-                        "memoryUsage": -1,
-                        "status": "JE",
-                    }
+            task_content = make_all_cases_result(meta=submission_config,
+                                                 status="JE",
+                                                 stderr=err_msg)
             self.result[submission_id] = (submission_config, task_content)
             self.on_submission_complete(submission_id)
             return
@@ -1085,14 +1060,8 @@ class Dispatcher(threading.Thread):
                 case_no,
                 exc,
             )
-            res = {
-                "Status": "JE",
-                "Stdout": "",
-                "Stderr": f"prepare case dir failed: {exc}",
-                "Duration": -1,
-                "MemUsage": -1,
-                "DockerExitCode": 1,
-            }
+            res = make_runner_result(status="JE",
+                                     stderr=f"prepare case dir failed: {exc}")
             lock = self.locks.get(submission_id)
             target_fn = self.on_case_complete
             if lock:
@@ -1138,14 +1107,8 @@ class Dispatcher(threading.Thread):
                 exc,
             )
         if copy_error:
-            res = {
-                "Status": "JE",
-                "Stdout": "",
-                "Stderr": f"resource copy failed: {copy_error}",
-                "Duration": -1,
-                "MemUsage": -1,
-                "DockerExitCode": 1,
-            }
+            res = make_runner_result(
+                status="JE", stderr=f"resource copy failed: {copy_error}")
             lock = self.locks.get(submission_id)
             if lock:
                 with lock:
@@ -1199,10 +1162,8 @@ class Dispatcher(threading.Thread):
             teacher_lang_key = mapping.get(str(teacher_lang_val or "").lower())
             if teacher_lang_key is None:
                 # mark JE for all cases of this submission
-                self._mark_submission_je(
-                    submission_id=submission_id,
-                    message="teacherLang missing/invalid",
-                )
+                self._mark_submission_failed(submission_id, "JE",
+                                             "teacherLang missing/invalid")
                 return
             compile_res = self.extract_compile_result(submission_id, lang)
             if self.compile_need(lang) and compile_res.get("Status") == "CE":
@@ -1272,14 +1233,8 @@ class Dispatcher(threading.Thread):
                     except Exception:
                         pass
             if use_custom_checker and checker_info.get("error"):
-                res = {
-                    "Status": "JE",
-                    "Stdout": "",
-                    "Stderr": checker_info.get("error", ""),
-                    "Duration": -1,
-                    "MemUsage": -1,
-                    "DockerExitCode": 1,
-                }
+                res = make_runner_result(status="JE",
+                                         stderr=checker_info.get("error", ""))
             if use_custom_checker and res.get("Status") not in {
                     "CE", "RE", "TLE", "MLE", "OLE", "JE"
             }:

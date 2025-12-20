@@ -9,12 +9,6 @@ from .config import (
     TESTDATA_ROOT,
 )
 
-# [DEBUG]
-import logging
-
-logger().setLevel(logging.DEBUG)
-# [DEBUG]
-
 
 def handle_problem_response(resp: rq.Response):
     if resp.status_code == 404:

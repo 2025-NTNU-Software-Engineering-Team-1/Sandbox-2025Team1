@@ -39,14 +39,14 @@ def extract(
     else:
         _extract_code_source(common_dir, source, int(meta.language))
     # copy testdata (exclude checker, resource_data*, chaos subdirectories)
-    testcase_dir = submission_dir / 'testcase'
+    testcase_dir = submission_dir / "testcase"
     shutil.copytree(
         testdata,
         testcase_dir,
-        ignore=shutil.ignore_patterns('checker', 'resource_data*', 'chaos'),
+        ignore=shutil.ignore_patterns("checker", "resource_data*", "chaos"),
     )
     # move chaos files to src directory (from original testdata, not copied)
-    chaos_dir = testdata / 'chaos'
+    chaos_dir = testdata / "chaos"
     if chaos_dir.exists():
         if chaos_dir.is_file():
             raise ValueError("'chaos' can not be a file")
@@ -113,7 +113,7 @@ def _safe_extract_zip(zf: ZipFile, target_dir: Path):
             raise ValueError(f'Invalid path in zip: {name}')
         # detect symlink via external_attr (high 4 bits == 0xA)
         if (info.external_attr >> 28) == 0xA:
-            raise ValueError('Symlinks are not allowed in submission archive')
+            raise ValueError("Symlinks are not allowed in submission archive")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with zf.open(info, 'r') as src, open(dest, 'wb') as dst:
+        with zf.open(info, "r") as src, open(dest, "wb") as dst:
             shutil.copyfileobj(src, dst)

@@ -12,12 +12,6 @@ from .meta import Sidecar
 from .pipeline import fetch_problem_network_config
 from .asset_cache import ensure_extracted_resource, get_asset_checksum
 
-# [DEBUG]
-import logging
-
-logger().setLevel(logging.DEBUG)
-# [DEBUG]
-
 
 class NetworkController:
 
@@ -401,7 +395,7 @@ class NetworkController:
         logger().debug(
             f"(*_*)[In _start_router] Starting router for submission {submission_id} with config: {config_data}"
         )
-        config_bytes = json.dumps(config_data).encode('utf-8')
+        config_bytes = json.dumps(config_data).encode("utf-8")
 
         # Router default connect Bridge
         host_config = self.client.create_host_config(cap_add=["NET_ADMIN"],
@@ -448,21 +442,34 @@ class NetworkController:
         logger().debug(
             f"(*_*)[In cleanup] Cleaning up resources for submission {submission_id}"
         )
-        # [DEBUG]
-        time.sleep(30)
-        # [DEBUG]
         res = temp_resource or self.resources.pop(submission_id, {})
+
+        # If Docker client is not initialized, skip cleanup operations
+        if not self.client:
+            logger().warning(
+                f"Docker client not initialized, skipping cleanup for submission {submission_id}"
+            )
+            return
 
         c_ids = res.get("container_ids", [])[:]
         if res.get("router_id"):
             c_ids.append(res.get("router_id"))
 
+        # Step 1: Gracefully stop containers (5 sec timeout)
+        for cid in c_ids:
+            try:
+                self.client.stop(cid, timeout=5)
+            except Exception:
+                pass
+
+        # Step 2: Force remove containers
         for cid in c_ids:
             try:
                 self.client.remove_container(cid, v=True, force=True)
             except Exception:
                 pass
 
+        # Step 3: Remove networks
         for nid in res.get("net_ids", []):
             try:
                 self.client.remove_network(nid)

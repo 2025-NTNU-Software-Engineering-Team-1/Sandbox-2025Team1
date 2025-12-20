@@ -92,8 +92,8 @@ def test_cleanup_removes_resources(network_controller, mock_docker_client):
     # Arrange
     submission_id = "test-sub"
     # replicate existing resources
-    network_controller.sidecar_resources[submission_id] = {
-        "network_name": "net-test",
+    network_controller.resources[submission_id] = {
+        "net_ids": ["net-123"],
         "container_ids": ["c1", "c2"],
         "router_id": "r1",
     }
@@ -110,6 +110,6 @@ def test_cleanup_removes_resources(network_controller, mock_docker_client):
     mock_docker_client.remove_container.assert_any_call("c1",
                                                         v=True,
                                                         force=True)
-    mock_docker_client.remove_network.assert_called_with("net-test")
+    mock_docker_client.remove_network.assert_called_with("net-123")
     # Confirm resource map is cleared
-    assert submission_id not in network_controller.sidecar_resources
+    assert submission_id not in network_controller.resources

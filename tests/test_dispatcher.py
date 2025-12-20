@@ -353,7 +353,7 @@ def test_build_failure_clears_submission(monkeypatch, tmp_path):
     dispatcher_obj.network_controller = MagicMock()  # Mock NetworkController
 
     submission_id = "build-ce"
-    (dispatcher.SUBMISSION_DIR / submission_id / "src" / "common").mkdir(
+    (dispatcher_obj.SUBMISSION_DIR / submission_id / "src" / "common").mkdir(
         parents=True, exist_ok=True)
     meta = Meta(
         language=Language.C,

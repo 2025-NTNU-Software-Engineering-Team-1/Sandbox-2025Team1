@@ -5,6 +5,7 @@ from typing import Dict, Optional, Tuple
 
 from .config import TESTDATA_ROOT
 from .asset_cache import ensure_custom_asset, AssetNotFoundError
+from .result_factory import make_checker_result
 from runner.path_utils import PathTranslator
 from runner.custom_checker_runner import CustomCheckerRunner, CustomCheckerError
 from .constant import ExecutionMode
@@ -84,12 +85,7 @@ def run_custom_checker_case(
         result = runner.run()
     except CustomCheckerError as exc:
         _cleanup(workdir)
-        return {
-            "status": "JE",
-            "message": str(exc),
-            "stdout": "",
-            "stderr": "",
-        }
+        return make_checker_result(status="JE", message=str(exc))
     finally:
         _cleanup(workdir)
 

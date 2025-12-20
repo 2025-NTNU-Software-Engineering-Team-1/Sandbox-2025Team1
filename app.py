@@ -24,8 +24,10 @@ if __name__ != "__main__":
     app.logger.setLevel(gunicorn_logger.level)
     logging.getLogger().setLevel(gunicorn_logger.level)
 
-    app.logger.setLevel(logging.DEBUG)
-    logging.getLogger().setLevel(logging.DEBUG)
+    # Allow overriding log level via environment variable
+    if os.getenv("NOJ_DEBUG", "").lower() == "true":
+        app.logger.setLevel(logging.DEBUG)
+        logging.getLogger().setLevel(logging.DEBUG)
 logger = app.logger
 
 # setup dispatcher
