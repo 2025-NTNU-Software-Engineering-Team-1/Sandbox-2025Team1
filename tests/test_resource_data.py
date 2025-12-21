@@ -18,17 +18,17 @@ class DummyAsset:
 
 
 def test_prepare_and_copy_resource_data(tmp_path, monkeypatch):
-    # create fake resource zip
-    res_zip = tmp_path / "resource_data.zip"
-    with zipfile.ZipFile(res_zip, "w") as zf:
-        zf.writestr("0000_config.txt", "cfg0")
-        zf.writestr("0001_config.txt", "cfg1")
+    # create fake extracted directory with resource files
+    extracted_dir = tmp_path / "extracted"
+    extracted_dir.mkdir(parents=True, exist_ok=True)
+    (extracted_dir / "0000_config.txt").write_text("cfg0")
+    (extracted_dir / "0001_config.txt").write_text("cfg1")
 
-    # mock ensure_custom_asset to return our zip
-    def fake_ensure(problem_id, asset_type, filename=None):
-        return res_zip
+    # mock ensure_extracted_resource to return our extracted dir
+    def fake_ensure(problem_id, asset_type):
+        return extracted_dir
 
-    monkeypatch.setattr("dispatcher.resource_data.ensure_custom_asset",
+    monkeypatch.setattr("dispatcher.resource_data.ensure_extracted_resource",
                         fake_ensure)
 
     submission_path = tmp_path / "submissions" / "s1"
@@ -41,37 +41,39 @@ def test_prepare_and_copy_resource_data(tmp_path, monkeypatch):
     )
     assert res_dir and res_dir.exists()
 
-    src_dir = submission_path / "src"
-    src_dir.mkdir(parents=True, exist_ok=True)
+    case_dir = submission_path / "src" / "cases" / "0000"
+    case_dir.mkdir(parents=True, exist_ok=True)
     copied = copy_resource_for_case(
-        resource_dir=res_dir,
-        src_dir=src_dir,
+        submission_path=submission_path,
+        case_dir=case_dir,
         task_no=0,
         case_no=0,
     )
-    assert (src_dir / "config.txt").read_text() == "cfg0"
+    assert (case_dir / "config.txt").read_text() == "cfg0"
     # cleanup copied
     from dispatcher.resource_data import cleanup_resource_files
-    cleanup_resource_files(src_dir, copied)
-    assert not (src_dir / "config.txt").exists()
+    cleanup_resource_files(case_dir, copied)
+    assert not (case_dir / "config.txt").exists()
 
 
 def test_prepare_teacher_resource_data_keeps_existing(tmp_path, monkeypatch):
-    res_zip = tmp_path / "resource_data_teacher.zip"
-    with zipfile.ZipFile(res_zip, "w") as zf:
-        zf.writestr("0000_teacher.txt", "t0")
+    # create fake extracted directory with teacher resource files
+    extracted_dir = tmp_path / "extracted_teacher"
+    extracted_dir.mkdir(parents=True, exist_ok=True)
+    (extracted_dir / "0000_teacher.txt").write_text("t0")
 
-    def fake_ensure(problem_id, asset_type, filename=None):
+    def fake_ensure(problem_id, asset_type):
         assert asset_type == "resource_data_teacher"
-        return res_zip
+        return extracted_dir
 
-    monkeypatch.setattr("dispatcher.resource_data.ensure_custom_asset",
+    monkeypatch.setattr("dispatcher.resource_data.ensure_extracted_resource",
                         fake_ensure)
 
     submission_path = tmp_path / "submissions" / "s2"
-    teacher_dir = submission_path / "teacher"
-    teacher_dir.mkdir(parents=True, exist_ok=True)
-    existing = teacher_dir / "Teacher_main"
+    # resource_data_teacher dir will be created in submission_path
+    res_teacher_dir = submission_path / "resource_data_teacher"
+    res_teacher_dir.mkdir(parents=True, exist_ok=True)
+    existing = res_teacher_dir / "Teacher_main"
     existing.write_text("keep")
 
     res_dir = prepare_teacher_resource_data(
@@ -80,8 +82,9 @@ def test_prepare_teacher_resource_data_keeps_existing(tmp_path, monkeypatch):
         asset_paths={"resource_data_teacher": "resource_data_teacher.zip"},
     )
     assert res_dir and res_dir.exists()
+    # The existing file should still be there since clean=False
     assert existing.read_text() == "keep"
-    assert (teacher_dir / "0000_teacher.txt").read_text() == "t0"
+    assert (res_dir / "0000_teacher.txt").read_text() == "t0"
 
 
 def test_custom_checker_receives_teacher_dir(tmp_path, monkeypatch):

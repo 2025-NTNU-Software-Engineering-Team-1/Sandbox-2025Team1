@@ -6,9 +6,12 @@ from dispatcher.meta import Sidecar
 
 @pytest.fixture
 def mock_docker_client():
-    with patch("dispatcher.network_control.docker.APIClient") as mock:
+    with patch("dispatcher.network_control.docker.APIClient") as mock_api, \
+         patch("dispatcher.network_control.docker.from_env") as mock_from_env:
         client_instance = MagicMock()
-        mock.return_value = client_instance
+        mock_api.return_value = client_instance
+        docker_cli_instance = MagicMock()
+        mock_from_env.return_value = docker_cli_instance
         yield client_instance
 
 
@@ -20,17 +23,31 @@ def network_controller(mock_docker_client):
 
 def test_ensure_sidecar_images_pulls_missing_image(network_controller,
                                                    mock_docker_client):
-    # Arrange
+    """
+    Test that _start_sidecars pulls images when they don't exist.
+    Note: The old ensure_sidecar_images method has been merged into _start_sidecars.
+    """
     import docker
 
-    sidecars = [Sidecar(name="db", image="mysql:5.7", env={}, args=[])]
+    sidecars_config = [{
+        "name": "db",
+        "image": "mysql:5.7",
+        "env": {},
+        "args": []
+    }]
 
-    # mock inspect_image push ImageNotFound
+    # mock inspect_image to raise ImageNotFound
     mock_docker_client.inspect_image.side_effect = docker.errors.ImageNotFound(
         "Missing")
+    mock_docker_client.create_network.return_value = {"Id": "net-123"}
+    mock_docker_client.create_container.return_value = {"Id": "container-456"}
+    mock_docker_client.create_host_config.return_value = {}
+    mock_docker_client.create_networking_config.return_value = {}
+    mock_docker_client.create_endpoint_config.return_value = {}
 
-    # Act
-    network_controller.ensure_sidecar_images(sidecars)
+    # Act - call internal _start_sidecars method
+    network_controller._start_sidecars("test-sub", sidecars_config,
+                                       "noj-net-test-sub")
 
     # Assert
     mock_docker_client.inspect_image.assert_called_with("mysql:5.7")
@@ -39,13 +56,26 @@ def test_ensure_sidecar_images_pulls_missing_image(network_controller,
 
 def test_ensure_sidecar_images_skips_existing_image(network_controller,
                                                     mock_docker_client):
-    # Arrange
-    sidecars = [Sidecar(name="db", image="mysql:5.7", env={}, args=[])]
-    # mock inspect_image
+    """
+    Test that _start_sidecars skips pulling images that already exist.
+    """
+    sidecars_config = [{
+        "name": "db",
+        "image": "mysql:5.7",
+        "env": {},
+        "args": []
+    }]
+    # mock inspect_image to return existing image
     mock_docker_client.inspect_image.return_value = {"Id": "sha256:..."}
+    mock_docker_client.create_network.return_value = {"Id": "net-123"}
+    mock_docker_client.create_container.return_value = {"Id": "container-456"}
+    mock_docker_client.create_host_config.return_value = {}
+    mock_docker_client.create_networking_config.return_value = {}
+    mock_docker_client.create_endpoint_config.return_value = {}
 
     # Act
-    network_controller.ensure_sidecar_images(sidecars)
+    network_controller._start_sidecars("test-sub", sidecars_config,
+                                       "noj-net-test-sub")
 
     # Assert
     mock_docker_client.inspect_image.assert_called_with("mysql:5.7")
@@ -54,42 +84,58 @@ def test_ensure_sidecar_images_skips_existing_image(network_controller,
 
 def test_setup_sidecars_creates_network_and_containers(network_controller,
                                                        mock_docker_client):
-    # Arrange
+    """
+    Test that _setup_topology creates network and containers for sidecars.
+    """
     submission_id = "test-sub"
-    sidecars = [
-        Sidecar(name="db",
-                image="mysql:5.7",
-                env={"KEY": "VAL"},
-                args=["--arg"])
-    ]
+    sidecars_config = [{
+        "name": "db",
+        "image": "mysql:5.7",
+        "env": {
+            "KEY": "VAL"
+        },
+        "args": ["--arg"]
+    }]
     mock_docker_client.create_network.return_value = {"Id": "net-123"}
     mock_docker_client.create_container.return_value = {"Id": "container-456"}
+    mock_docker_client.create_host_config.return_value = {}
+    mock_docker_client.create_networking_config.return_value = {}
+    mock_docker_client.create_endpoint_config.return_value = {}
+    mock_docker_client.inspect_image.return_value = {"Id": "sha256:..."}
+    mock_docker_client.inspect_container.return_value = {
+        "State": {
+            "Status": "running"
+        }
+    }
 
-    # Act
-    container_ids = network_controller.setup_sidecars(submission_id, sidecars)
+    # Act - call internal _setup_topology with sidecar-only config
+    network_controller._setup_topology(submission_id=submission_id,
+                                       external_config={},
+                                       sidecars_config=sidecars_config,
+                                       custom_image=None)
 
     # Assert
-    # 1. Check Network Creation
+    # 1. Check Network Creation (internal=True for sidecar-only)
     mock_docker_client.create_network.assert_called_with(
-        name=f"noj-net-{submission_id}",
+        f"noj-net-{submission_id}",
         driver="bridge",
         internal=True,
-        check_duplicate=True,
     )
     # 2. Check Container Creation
     mock_docker_client.create_container.assert_called()
     call_args = mock_docker_client.create_container.call_args[1]
     assert call_args["image"] == "mysql:5.7"
-    assert "KEY=VAL" in call_args["environment"]
+    assert call_args["environment"] == {"KEY": "VAL"}
     assert call_args["command"] == ["--arg"]
 
     # 3. Check Container Start
     mock_docker_client.start.assert_called()
-    assert container_ids == ["container-456"]
 
 
 def test_cleanup_removes_resources(network_controller, mock_docker_client):
-    # Arrange
+    """
+    Test that cleanup properly removes containers and networks.
+    """
     submission_id = "test-sub"
     # replicate existing resources
     network_controller.resources[submission_id] = {
@@ -102,7 +148,8 @@ def test_cleanup_removes_resources(network_controller, mock_docker_client):
     network_controller.cleanup(submission_id)
 
     # Assert
-    # Verify that remove_container and remove_network were called
+    # Verify that stop and remove_container were called
+    assert mock_docker_client.stop.call_count >= 3  # r1, c1, c2
     assert mock_docker_client.remove_container.call_count >= 3  # r1, c1, c2
     mock_docker_client.remove_container.assert_any_call("r1",
                                                         v=True,

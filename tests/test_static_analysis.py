@@ -103,7 +103,7 @@ def test_python_syntax_whitelist_custom(tmp_path):
 
 def test_zip_static_analysis_python_return_blacklist(tmp_path):
     src_dir = tmp_path / "src" / "common"
-    src_dir.mkdir()
+    src_dir.mkdir(parents=True)
     (src_dir / "main.py").write_text("def f(x):\n"
                                      "    if x > 0:\n"
                                      "        return x\n"

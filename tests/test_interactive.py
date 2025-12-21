@@ -23,8 +23,17 @@ from runner.interactive_orchestrator import _parse_check_result
 def _has_image(name: str) -> bool:
     """Return True if image exists and can run python3."""
     try:
+        # First check if docker command is available
+        import shutil
+        if shutil.which('docker') is None:
+            return False
         cli = docker.APIClient(base_url=SUBMISSION_CFG.get(
             "docker_url", "unix://var/run/docker.sock"))
+        # Check if Docker is responsive
+        try:
+            cli.ping()
+        except Exception:
+            return False
         images = cli.images(name=name) or []
         if not images:
             return False
@@ -91,14 +100,21 @@ def _prepare_submission(sub_id: str,
 
         shutil.rmtree(root, onerror=_onerror)
     (root / "teacher").mkdir(parents=True)
+    (root / "teacher" / "cases" / "0000").mkdir(parents=True)
     (root / "src" / "common").mkdir(parents=True)
     (root / "src" / "cases").mkdir(parents=True)
     (root / "testcase").mkdir()
     (root / "testcase" / "0000.in").write_text("")
 
+    # Create teacher case dir with testcase.in
+    teacher_case_dir = root / "teacher" / "cases" / "0000"
+    (teacher_case_dir / "testcase.in").write_text("")
+
     if teacher_lang == "python3":
         t_src = root / "teacher" / "main.py"
         t_src.write_text(teacher_code)
+        # Also copy to teacher case dir
+        (teacher_case_dir / "main.py").write_text(teacher_code)
     else:
         t_src = root / "teacher" / "main.c"
         t_src.write_text(teacher_code)
@@ -109,6 +125,12 @@ def _prepare_submission(sub_id: str,
             t_main.unlink()
         os.link(t_bin, t_main)
         t_main.chmod(0o755)
+        # Also copy binary to teacher case dir
+        t_case_main = teacher_case_dir / "main"
+        if t_case_main.exists():
+            t_case_main.unlink()
+        shutil.copy2(t_bin, t_case_main)
+        t_case_main.chmod(0o755)
 
     if student_lang == "python3":
         s_src = root / "src" / "common" / "main.py"
@@ -138,6 +160,19 @@ def _run(sub_id: str,
         common_dir = WORKDIR / sub_id / "src" / "common"
         case_dir.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(common_dir, case_dir, dirs_exist_ok=True)
+    # teacher_case_dir is teacher/cases/{case_no}/
+    teacher_case_dir = WORKDIR / sub_id / "teacher" / "cases" / case_no
+    if not teacher_case_dir.exists():
+        # Create teacher case dir from teacher common files
+        teacher_common = WORKDIR / sub_id / "teacher"
+        teacher_case_dir.mkdir(parents=True, exist_ok=True)
+        # Copy teacher executables
+        for item in teacher_common.iterdir():
+            if item.is_file() and item.name != "main.c":
+                shutil.copy2(item, teacher_case_dir / item.name)
+        # Copy testcase.in
+        (teacher_case_dir / "testcase.in"
+         ).write_text(case_path.read_text() if case_path.exists() else "")
     runner = InteractiveRunner(
         submission_id=sub_id,
         time_limit=2000,
@@ -149,6 +184,7 @@ def _run(sub_id: str,
         pipe_mode=pipe_mode,
         case_dir=case_dir,
         student_allow_write=allow_write_student,
+        teacher_case_dir=teacher_case_dir,
     )
     return runner.run()
 
@@ -504,7 +540,8 @@ def test_prepare_teacher_file_respects_teacher_lang(tmp_path, monkeypatch):
     bs.prepare_interactive_teacher_artifacts(problem_id=1,
                                              meta=meta,
                                              submission_dir=tmp_path)
-    assert (tmp_path / "teacher" / "main.py").exists()
+    # Teacher artifacts are now placed in teacher/common/
+    assert (tmp_path / "teacher" / "common" / "main.py").exists()
 
 
 def test_prepare_teacher_file_missing_teacher_lang(tmp_path, monkeypatch):

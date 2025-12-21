@@ -109,11 +109,24 @@ class Dispatcher(threading.Thread):
         self.resource_dirs = {}
         self.teacher_resource_dirs = {}
 
+        # Trial Submission support
+        self.trial_submissions = set()
+
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}
 
     def contains(self, submission_id: str):
         return submission_id in self.result
+
+    def _has_pending_normal_jobs(self) -> bool:
+        """Check if there are any non-trial submissions with pending jobs in the queue."""
+        # Check if any submission in result (excluding trials) still has pending work
+        for sid in self.result.keys():
+            if sid not in self.trial_submissions:
+                # Check if this normal submission still has pending tasks
+                if sid in self.pending_tasks and self.pending_tasks[sid]:
+                    return True
+        return False
 
     def _common_dir(self, submission_id: str) -> pathlib.Path:
         base = self.SUBMISSION_DIR / submission_id / "src"
@@ -535,9 +548,17 @@ class Dispatcher(threading.Thread):
             )
         raise BuildStrategyError(f"unsupported build strategy: {strategy}")
 
-    def handle(self, submission_id: str, problem_id: int):
+    def handle(self,
+               submission_id: str,
+               problem_id: int,
+               is_trial: bool = False):
         logger().info(
-            f"receive submission {submission_id} for problem: {problem_id}.")
+            f"receive submission {submission_id} for problem: {problem_id} (trial={is_trial})."
+        )
+
+        # Track trial submissions
+        if is_trial:
+            self.trial_submissions.add(submission_id)
         submission_path = self.SUBMISSION_DIR / submission_id
         if not submission_path.exists():
             raise FileNotFoundError(
@@ -737,6 +758,17 @@ class Dispatcher(threading.Thread):
             if self.is_timed_out(submission_id):
                 logger().info(f"submission timed out [id={submission_id}]")
                 continue
+
+            # [Trial Priority] If this is a trial submission and there are normal jobs waiting,
+            # put the trial job back and process normal jobs first
+            if submission_id in self.trial_submissions:
+                if self._has_pending_normal_jobs():
+                    logger().debug(
+                        f"Deferring trial job for {submission_id} - normal jobs pending"
+                    )
+                    self.queue.put(_job)
+                    time.sleep(0.1)  # Small delay to prevent tight loop
+                    continue
             # get task info
             submission_config, _ = self.result[submission_id]
 
@@ -1416,39 +1448,57 @@ class Dispatcher(threading.Thread):
             submission_data["scoring"] = scoring_payload
         if status_override:
             submission_data["statusOverride"] = status_override
-        logger().info(f"send to BE [submission_id={submission_id}]")
+        # Determine endpoint based on submission type
+        is_trial = submission_id in self.trial_submissions
+        if is_trial:
+            endpoint = f"{config.BACKEND_API}/trial-submission/{submission_id}/result"
+        else:
+            endpoint = f"{config.BACKEND_API}/submission/{submission_id}/complete"
+
+        logger().info(
+            f"send to BE [submission_id={submission_id}] (trial={is_trial})")
         resp = None
         try:
-            resp = requests.put(
-                f"{config.BACKEND_API}/submission/{submission_id}/complete",
-                json=submission_data,
-            )
+            resp = requests.put(endpoint, json=submission_data)
             logger().debug(
                 f"get BE response: [{resp.status_code}] {resp.text}", )
             # clear
             if resp.ok:
-                # collect binary lazily
-                try:
-                    if self.artifact_collector.should_collect_binary(meta):
-                        self.artifact_collector.collect_binary(
-                            submission_id=submission_id,
-                            src_dir=self._common_dir(submission_id),
+                # collect binary lazily (skip for trial submissions)
+                if not is_trial:
+                    try:
+                        if self.artifact_collector.should_collect_binary(meta):
+                            self.artifact_collector.collect_binary(
+                                submission_id=submission_id,
+                                src_dir=self._common_dir(submission_id),
+                            )
+                    except Exception as exc:
+                        logger().warning(
+                            "collect binary failed [id=%s]: %s",
+                            submission_id,
+                            exc,
                         )
-                except Exception as exc:
-                    logger().warning(
-                        "collect binary failed [id=%s]: %s",
-                        submission_id,
-                        exc,
-                    )
-                try:
-                    self.artifact_collector.upload_all(submission_id)
-                except Exception as exc:
-                    logger().warning(
-                        "upload artifacts failed [id=%s]: %s",
-                        submission_id,
-                        exc,
-                    )
+                    try:
+                        self.artifact_collector.upload_all(submission_id)
+                    except Exception as exc:
+                        logger().warning(
+                            "upload artifacts failed [id=%s]: %s",
+                            submission_id,
+                            exc,
+                        )
                 file_manager.clean_data(submission_id)
+
+                # Cleanup trial-specific data
+                if is_trial:
+                    try:
+                        from .testdata import cleanup_custom_testdata
+                        cleanup_custom_testdata(submission_id)
+                    except Exception as exc:
+                        logger().warning(
+                            "cleanup custom testdata failed [id=%s]: %s",
+                            submission_id,
+                            exc,
+                        )
             # copy to another place
             else:
                 file_manager.backup_data(submission_id)
@@ -1460,6 +1510,8 @@ class Dispatcher(threading.Thread):
             )
             file_manager.backup_data(submission_id)
         finally:
+            # Cleanup trial tracking
+            self.trial_submissions.discard(submission_id)
             self.release(submission_id)
 
     def get_static_analysis_rules(self, problem_id: int):
