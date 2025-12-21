@@ -95,8 +95,9 @@ class APIHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
-    server = HTTPServer(('localhost', 8080), APIHandler)
-    print('Server started on port 8080', flush=True)
+    # 綁定到 0.0.0.0 以便其他容器可以連接
+    server = HTTPServer(('0.0.0.0', 8080), APIHandler)
+    print('Server started on 0.0.0.0:8080', flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

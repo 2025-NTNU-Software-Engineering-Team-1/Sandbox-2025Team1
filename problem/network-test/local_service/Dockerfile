@@ -17,5 +17,5 @@ RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.
 # 設置執行權限
 RUN chmod +x start.sh
 
-# 預設命令（start.sh 會在 Sandbox 中執行）
-CMD ["/bin/bash"]
+# 啟動 HTTP 服務器（保持容器運行）
+CMD ["python3", "server.py"]

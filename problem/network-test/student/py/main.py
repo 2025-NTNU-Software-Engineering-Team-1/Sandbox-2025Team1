@@ -5,7 +5,8 @@ import sys
 
 def fetch_data(param):
     """發送HTTP GET請求並返回回應內容"""
-    url = f"http://localhost:8080/api/data/{param}"
+    # 使用 Docker 網路別名 'local_service' 連接到 local service 容器
+    url = f"http://local_service:8080/api/data/{param}"
 
     try:
         with urllib.request.urlopen(url) as response:

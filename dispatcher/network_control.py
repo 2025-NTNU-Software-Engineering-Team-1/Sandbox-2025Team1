@@ -326,6 +326,7 @@ class NetworkController:
     def _start_sidecars(self, submission_id: str, configs: list,
                         net_name: str) -> List[str]:
         ids = []
+
         for idx, sc in enumerate(configs):
             logger().debug(
                 f"(*_*)[In _start_sidecars] Starting sidecar {idx} for submission {submission_id} with config: {sc}"
@@ -366,6 +367,7 @@ class NetworkController:
         logger().debug(
             f"(*_*)[In _start_custom_envs] Starting custom environments for submission {submission_id} with images: {images_map}"
         )
+
         for alias, image_tag in images_map.items():
             logger().info(
                 f"Starting custom env [{alias}] using image [{image_tag}]")
@@ -420,6 +422,7 @@ class NetworkController:
                                 path="/",
                                 data=tar_stream)
         self.client.start(container.get("Id"))
+
         return container.get("Id")
 
     def get_network_mode(self, submission_id: str) -> str:
