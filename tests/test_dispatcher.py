@@ -585,6 +585,101 @@ def test_run_custom_scorer_payload(monkeypatch):
     assert status_override is None
 
 
+# --- Trial Submission Priority Tests ---
+
+
+class TestTrialSubmissionPriority:
+    """Tests for _has_pending_normal_jobs() method used in Trial Submission priority handling."""
+
+    def test_no_submissions_returns_false(self):
+        """No submissions should return False."""
+        d = Dispatcher.__new__(Dispatcher)
+        d.result = {}
+        d.trial_submissions = set()
+        assert d._has_pending_normal_jobs() == False
+
+    def test_normal_submission_with_pending_cases_returns_true(self):
+        """Normal submission with pending cases (None values) should return True."""
+        d = Dispatcher.__new__(Dispatcher)
+        d.result = {}
+        d.trial_submissions = set()
+
+        class MockMeta:
+            pass
+
+        d.result["normal-1"] = (MockMeta(), {"0000": None, "0001": None})
+        assert d._has_pending_normal_jobs() == True
+
+    def test_normal_submission_all_completed_returns_false(self):
+        """Normal submission with all completed cases should return False."""
+        d = Dispatcher.__new__(Dispatcher)
+        d.result = {}
+        d.trial_submissions = set()
+
+        class MockMeta:
+            pass
+
+        d.result["normal-1"] = (
+            MockMeta(),
+            {
+                "0000": {
+                    "status": "AC"
+                },
+                "0001": {
+                    "status": "WA"
+                }
+            },
+        )
+        assert d._has_pending_normal_jobs() == False
+
+    def test_only_trial_pending_returns_false(self):
+        """Trial submission with pending cases should be ignored (return False)."""
+        d = Dispatcher.__new__(Dispatcher)
+        d.result = {}
+        d.trial_submissions = set()
+
+        class MockMeta:
+            pass
+
+        d.result["trial-1"] = (MockMeta(), {"0000": None})
+        d.trial_submissions.add("trial-1")
+        assert d._has_pending_normal_jobs() == False
+
+    def test_normal_pending_with_trial_pending_returns_true(self):
+        """Mix of normal (pending) and trial (pending) should return True."""
+        d = Dispatcher.__new__(Dispatcher)
+        d.result = {}
+        d.trial_submissions = set()
+
+        class MockMeta:
+            pass
+
+        d.result["trial-1"] = (MockMeta(), {"0000": None})
+        d.trial_submissions.add("trial-1")
+        d.result["normal-2"] = (MockMeta(), {"0000": None})
+        assert d._has_pending_normal_jobs() == True
+
+    def test_normal_partially_completed_returns_true(self):
+        """Normal submission partially completed should return True."""
+        d = Dispatcher.__new__(Dispatcher)
+        d.result = {}
+        d.trial_submissions = set()
+
+        class MockMeta:
+            pass
+
+        d.result["normal-3"] = (
+            MockMeta(),
+            {
+                "0000": {
+                    "status": "AC"
+                },
+                "0001": None
+            },
+        )
+        assert d._has_pending_normal_jobs() == True
+
+
 def test_interactive_compile_error_short_circuits(monkeypatch):
     dispatcher = Dispatcher()
     dispatcher.testing = True

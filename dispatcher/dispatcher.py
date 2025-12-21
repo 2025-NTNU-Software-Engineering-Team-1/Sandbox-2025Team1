@@ -119,12 +119,17 @@ class Dispatcher(threading.Thread):
         return submission_id in self.result
 
     def _has_pending_normal_jobs(self) -> bool:
-        """Check if there are any non-trial submissions with pending jobs in the queue."""
-        # Check if any submission in result (excluding trials) still has pending work
+        """Check if there are any non-trial submissions with pending jobs.
+        
+        This checks if any normal (non-trial) submission has cases that haven't
+        completed yet (result value is None). This correctly detects normal jobs
+        in all phases: Static Analysis, Network Setup, and Execution.
+        """
         for sid in self.result.keys():
             if sid not in self.trial_submissions:
-                # Check if this normal submission still has pending tasks
-                if sid in self.pending_tasks and self.pending_tasks[sid]:
+                # Check if this normal submission still has incomplete cases
+                _, results = self.result[sid]
+                if any(v is None for v in results.values()):
                     return True
         return False
 
