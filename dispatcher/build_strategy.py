@@ -299,7 +299,7 @@ def _prepare_teacher_artifacts(meta: Meta,
         raise BuildStrategyError(
             "Interactive judge program failed to compile. Please contact course staff."
         )
-    binary = teacher_dir / "Teacher_main"
+    binary = teacher_dir / "teacher_main"
     if not binary.exists():
         raise BuildStrategyError("teacher binary missing after compile")
     # also ensure ./main exists for sandbox execution

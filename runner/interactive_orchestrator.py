@@ -284,17 +284,19 @@ def orchestrate(args: argparse.Namespace):
     teacher_files_before = _dir_file_count(teacher_dir)
 
     # Ensure teacher binary/script ready
-    teacher_main = teacher_dir / ("Teacher_main"
+    teacher_main = teacher_dir / ("teacher_main"
                                   if teacher_lang != "python3" else "main.py")
     teacher_source = teacher_dir / ("main.py"
                                     if teacher_lang == "python3" else "main.c")
-    if teacher_lang != "python3" and not teacher_main.exists():
+    teacher_entry = teacher_dir / "main"
+    if teacher_lang != "python3" and not (teacher_main.exists()
+                                          or teacher_entry.exists()):
         raise OrchestratorError("teacher binary missing")
     if teacher_lang == "python3" and not teacher_source.exists():
         raise OrchestratorError("teacher script missing")
     if teacher_lang != "python3":
-        _ensure_exec(teacher_dir / "main",
-                     [teacher_main, teacher_dir / "a.out"])
+        _ensure_exec(teacher_entry,
+                     [teacher_main, teacher_entry, teacher_dir / "a.out"])
     else:
         _ensure_exec(teacher_dir / "main.py", [teacher_source])
 

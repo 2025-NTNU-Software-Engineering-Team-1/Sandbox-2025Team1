@@ -19,29 +19,35 @@ class ProblemParser:
 
     def parse(self):
         for prob in os.listdir(self.data_path):
+            prob_base_dir = self.data_path / prob
+            meta_path = prob_base_dir / "meta.json"
+            src_dir = prob_base_dir / "src"
+            testcase_dir = prob_base_dir / "testcase"
+            if not meta_path.is_file() or not src_dir.is_dir(
+            ) or not testcase_dir.is_dir():
+                continue
+
             self.problem[prob] = {}
             prob_data = self.problem[prob]
-            prob_base_dir = self.data_path / prob
 
             # read metadata
-            with open(f'{prob_base_dir}/meta.json') as f:
+            with open(meta_path) as f:
                 prob_data['meta'] = json.load(f)
 
             # parse source code
             prob_data['source'] = {}
-            for src in os.listdir(f'{prob_base_dir}/src'):
-                with open(f'{prob_base_dir}/src/{src}') as f:
+            for src in os.listdir(src_dir):
+                with open(src_dir / src) as f:
                     prob_data['source'][src] = f.read()
 
             # read testcase
             prob_data['testcase'] = []
-            testcase_dir = prob_base_dir / 'testcase'
             for i, task in enumerate(prob_data['meta']['tasks']):
                 prob_data['testcase'].append([])
                 for j in range(task['caseCount']):
-                    with open(f'{testcase_dir}/{i:02d}{j:02d}.in') as f:
+                    with open(testcase_dir / f'{i:02d}{j:02d}.in') as f:
                         t_in = f.read()
-                    with open(f'{testcase_dir}/{i:02d}{j:02d}.out') as f:
+                    with open(testcase_dir / f'{i:02d}{j:02d}.out') as f:
                         t_out = f.read()
                     prob_data['testcase'][i].append({
                         'in': t_in,

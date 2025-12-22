@@ -73,7 +73,7 @@ def test_prepare_teacher_resource_data_keeps_existing(tmp_path, monkeypatch):
     # resource_data_teacher dir will be created in submission_path
     res_teacher_dir = submission_path / "resource_data_teacher"
     res_teacher_dir.mkdir(parents=True, exist_ok=True)
-    existing = res_teacher_dir / "Teacher_main"
+    existing = res_teacher_dir / "teacher_main"
     existing.write_text("keep")
 
     res_dir = prepare_teacher_resource_data(

@@ -101,9 +101,9 @@ class SubmissionRunner:
         else:
             result.Status = "CE"
         payload = dataclasses.asdict(result)
-        # rename main -> Teacher_main if present
+        # rename main -> teacher_main if present
         bin_path = pathlib.Path(src_dir) / "main"
-        target = pathlib.Path(src_dir) / "Teacher_main"
+        target = pathlib.Path(src_dir) / "teacher_main"
         if bin_path.exists():
             if target.exists():
                 target.unlink()

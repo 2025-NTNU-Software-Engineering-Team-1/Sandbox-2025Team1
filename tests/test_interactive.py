@@ -118,7 +118,7 @@ def _prepare_submission(sub_id: str,
     else:
         t_src = root / "teacher" / "main.c"
         t_src.write_text(teacher_code)
-        t_bin = root / "teacher" / "Teacher_main"
+        t_bin = root / "teacher" / "teacher_main"
         _compile_c(t_src, t_bin)
         t_main = root / "teacher" / "main"
         if t_main.exists():
@@ -365,7 +365,7 @@ def test_interactive_teacher_can_write(clean_submission):
     _prepare_submission(sub_id, teacher, student)
     res = _run(sub_id)
     assert res["Status"] == "AC"
-    tmpfile = WORKDIR / sub_id / "teacher" / "tmp.txt"
+    tmpfile = WORKDIR / sub_id / "teacher" / "cases" / "0000" / "tmp.txt"
     assert tmpfile.exists()
 
 
