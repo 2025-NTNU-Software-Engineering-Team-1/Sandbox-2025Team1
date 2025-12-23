@@ -7,6 +7,7 @@ from dispatcher.resource_data import (
     prepare_resource_data,
     prepare_teacher_resource_data,
     copy_resource_for_case,
+    prepare_teacher_for_case,
 )
 from runner.path_utils import PathTranslator
 
@@ -133,3 +134,51 @@ def test_custom_checker_receives_teacher_dir(tmp_path, monkeypatch):
     host_teacher = str(PathTranslator().to_host(teacher_dir))
     assert captured.get("teacher_dir") == host_teacher
     assert res["status"] == "AC"
+
+
+def test_prepare_teacher_for_case_copies_resources(tmp_path):
+    submission_path = tmp_path / "submissions" / "s4"
+    teacher_common = submission_path / "teacher" / "common"
+    teacher_common.mkdir(parents=True, exist_ok=True)
+    (teacher_common / "teacher_main").write_text("bin")
+    (teacher_common / "main").write_text("bin")
+
+    testcase_dir = submission_path / "testcase"
+    testcase_dir.mkdir(parents=True, exist_ok=True)
+    (testcase_dir / "0000.in").write_text("input")
+
+    teacher_res_dir = submission_path / "resource_data_teacher"
+    teacher_res_dir.mkdir(parents=True, exist_ok=True)
+    (teacher_res_dir / "0000_data.txt").write_text("data")
+
+    teacher_case_dir = prepare_teacher_for_case(
+        submission_path=submission_path,
+        task_no=0,
+        case_no=0,
+        teacher_common_dir=teacher_common,
+        copy_testcase=True,
+    )
+
+    assert (teacher_case_dir / "teacher_main").read_text() == "bin"
+    assert (teacher_case_dir / "main").read_text() == "bin"
+    assert (teacher_case_dir / "testcase.in").read_text() == "input"
+    assert (teacher_case_dir / "data.txt").read_text() == "data"
+
+
+def test_copy_resource_for_case_flattens_nested(tmp_path):
+    submission_path = tmp_path / "submissions" / "s5"
+    resource_dir = submission_path / "resource_data" / "nested"
+    resource_dir.mkdir(parents=True, exist_ok=True)
+    (resource_dir / "0000_file.txt").write_text("value")
+
+    case_dir = submission_path / "src" / "cases" / "0000"
+    case_dir.mkdir(parents=True, exist_ok=True)
+
+    copied = copy_resource_for_case(
+        submission_path=submission_path,
+        case_dir=case_dir,
+        task_no=0,
+        case_no=0,
+    )
+    assert (case_dir / "file.txt").read_text() == "value"
+    assert (case_dir / "file.txt") in copied

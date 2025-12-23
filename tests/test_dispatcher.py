@@ -588,6 +588,131 @@ def test_run_custom_scorer_payload(monkeypatch):
 # --- Trial Submission Priority Tests ---
 
 
+def test_create_container_passes_network_mode_to_submission_runner(
+        monkeypatch, tmp_path):
+    monkeypatch.setattr("dispatcher.dispatcher.NetworkController", MagicMock)
+    dispatcher = Dispatcher()
+    dispatcher.SUBMISSION_DIR = tmp_path / "submissions"
+    dispatcher.SUBMISSION_DIR.mkdir(parents=True, exist_ok=True)
+    dispatcher.testing = True
+
+    submission_id = "net-sub"
+    case_no = "0000"
+    common_dir = dispatcher.SUBMISSION_DIR / submission_id / "src" / "common"
+    common_dir.mkdir(parents=True, exist_ok=True)
+
+    meta = Meta(
+        language=Language.PY,
+        tasks=[
+            Task(taskScore=100, memoryLimit=128, timeLimit=1000, caseCount=1)
+        ],
+        submissionMode=SubmissionMode.CODE,
+        executionMode=ExecutionMode.GENERAL,
+        buildStrategy=BuildStrategy.COMPILE,
+    )
+    dispatcher.result[submission_id] = (meta, {case_no: None})
+    dispatcher.locks[submission_id] = threading.Lock()
+
+    captured = {}
+
+    class DummyRunner:
+
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+
+        def run(self, skip_diff=False):
+            return {
+                "Status": "AC",
+                "Stdout": "",
+                "Stderr": "",
+                "DockerExitCode": 0,
+                "Duration": 1,
+                "MemUsage": 1,
+            }
+
+    monkeypatch.setattr("dispatcher.dispatcher.SubmissionRunner", DummyRunner)
+
+    dispatcher.create_container(
+        submission_id=submission_id,
+        case_no=case_no,
+        mem_limit=128,
+        time_limit=1000,
+        case_in_path=str(tmp_path / "0000.in"),
+        case_out_path=str(tmp_path / "0000.out"),
+        lang=Language.PY,
+        execution_mode=ExecutionMode.GENERAL,
+        teacher_first=False,
+        network_mode="container:router-1",
+    )
+
+    assert captured.get("network_mode") == "container:router-1"
+
+
+def test_create_container_passes_network_mode_to_interactive_runner(
+        monkeypatch, tmp_path):
+    monkeypatch.setattr("dispatcher.dispatcher.NetworkController", MagicMock)
+    dispatcher = Dispatcher()
+    dispatcher.SUBMISSION_DIR = tmp_path / "submissions"
+    dispatcher.SUBMISSION_DIR.mkdir(parents=True, exist_ok=True)
+    dispatcher.testing = True
+
+    submission_id = "net-interactive"
+    case_no = "0000"
+    (dispatcher.SUBMISSION_DIR / submission_id / "src" / "common").mkdir(
+        parents=True, exist_ok=True)
+    (dispatcher.SUBMISSION_DIR / submission_id / "teacher" / "common").mkdir(
+        parents=True, exist_ok=True)
+
+    meta = Meta(
+        language=Language.PY,
+        tasks=[
+            Task(taskScore=100, memoryLimit=128, timeLimit=1000, caseCount=1)
+        ],
+        submissionMode=SubmissionMode.CODE,
+        executionMode=ExecutionMode.INTERACTIVE,
+        buildStrategy=BuildStrategy.COMPILE,
+        assetPaths={"teacherLang": "c"},
+        teacherFirst=True,
+    )
+    dispatcher.result[submission_id] = (meta, {case_no: None})
+    dispatcher.locks[submission_id] = threading.Lock()
+
+    captured = {}
+
+    class DummyInteractiveRunner:
+
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+
+        def run(self):
+            return {
+                "Status": "AC",
+                "Stdout": "",
+                "Stderr": "",
+                "DockerExitCode": 0,
+                "Duration": 1,
+                "MemUsage": 1,
+            }
+
+    monkeypatch.setattr("dispatcher.dispatcher.InteractiveRunner",
+                        DummyInteractiveRunner)
+
+    dispatcher.create_container(
+        submission_id=submission_id,
+        case_no=case_no,
+        mem_limit=128,
+        time_limit=1000,
+        case_in_path=str(tmp_path / "0000.in"),
+        case_out_path=str(tmp_path / "0000.out"),
+        lang=Language.PY,
+        execution_mode=ExecutionMode.INTERACTIVE,
+        teacher_first=True,
+        network_mode="noj-net-xyz",
+    )
+
+    assert captured.get("network_mode") == "noj-net-xyz"
+
+
 class TestTrialSubmissionPriority:
     """Tests for _has_pending_normal_jobs() method used in Trial Submission priority handling."""
 
