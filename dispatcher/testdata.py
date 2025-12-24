@@ -169,3 +169,258 @@ def ensure_testdata(problem_id: int):
         meta = fetch_problem_meta(problem_id)
         checksum = calc_checksum(testdata + meta.encode())
         client.setex(key, 600, checksum)
+
+
+# === Trial Submission Support ===
+
+# Directory for trial-specific test data
+TRIAL_TESTDATA_DIR = TESTDATA_ROOT / "trial"
+TRIAL_TESTDATA_DIR.mkdir(exist_ok=True)
+
+
+def get_public_testdata_root(problem_id: int) -> Path:
+    """Get the path for public test data (Trial Mode)."""
+    return TESTDATA_ROOT / str(problem_id) / "public"
+
+
+def get_custom_testdata_root(submission_id: str) -> Path:
+    """Get the path for custom test data (Trial Mode, per-submission)."""
+    return TRIAL_TESTDATA_DIR / submission_id
+
+
+def fetch_public_testdata(problem_id: int) -> bytes:
+    """Fetch public test data ZIP from backend server."""
+    logger().debug(f"fetch public testdata [problem_id: {problem_id}]")
+    resp = rq.get(
+        f"{BACKEND_API}/problem/{problem_id}/public-testdata",
+        params={
+            "token": SANDBOX_TOKEN,
+        },
+    )
+    handle_problem_response(resp)
+    return resp.content
+
+
+def get_public_checksum(problem_id: int) -> str:
+    """Get checksum of public test data from backend."""
+    resp = rq.get(
+        f"{BACKEND_API}/problem/{problem_id}/public-checksum",
+        params={
+            "token": SANDBOX_TOKEN,
+        },
+    )
+    handle_problem_response(resp)
+    data = resp.json().get("data", {})
+    return data.get("checksum") if isinstance(data, dict) else data
+
+
+def ensure_public_testdata(problem_id: int):
+    """
+    Ensure public test data for Trial Mode is up to date.
+    Similar to ensure_testdata() but for public cases.
+    """
+    client = get_redis_client()
+    key = f"problem-{problem_id}-public-checksum"
+    lock_key = f"{key}-lock"
+    with client.lock(lock_key, timeout=60):
+        curr_checksum = client.get(key)
+        if curr_checksum is not None:
+            curr_checksum = curr_checksum.decode()
+            try:
+                checksum = get_public_checksum(problem_id)
+                if checksum and secrets.compare_digest(curr_checksum,
+                                                       checksum):
+                    logger().debug(
+                        f"public testdata is up to date [problem_id: {problem_id}]"
+                    )
+                    return
+            except Exception as exc:
+                logger().warning(
+                    f"Failed to verify public testdata checksum: {exc}")
+
+        logger().info(f"refresh public testdata [problem_id: {problem_id}]")
+        testdata = fetch_public_testdata(problem_id)
+        public_root = get_public_testdata_root(problem_id)
+        if public_root.exists():
+            shutil.rmtree(public_root)
+        public_root.mkdir(parents=True, exist_ok=True)
+        with ZipFile(io.BytesIO(testdata)) as zf:
+            zf.extractall(public_root)
+        checksum = calc_checksum(testdata)
+        client.setex(key, 600, checksum)
+
+
+def scan_and_generate_tasks(testdata_path: Path,
+                            default_time_limit: int = 1000,
+                            default_memory_limit: int = 65536) -> list:
+    """
+    Scan test data directory and generate tasks configuration.
+    Used for Trial Mode where we dynamically generate tasks from actual .in files.
+    
+    Note: Scores are distributed evenly to satisfy Meta validator (sum must be 100).
+    
+    Args:
+        testdata_path: Path to test data directory
+        default_time_limit: Default time limit in ms (default: 1000)
+        default_memory_limit: Default memory limit in KB (default: 65536)
+    
+    Returns:
+        List of task dictionaries with caseCount, taskScore, timeLimit, memoryLimit
+    """
+    from collections import defaultdict
+
+    task_cases = defaultdict(int)
+
+    # Scan all .in files
+    for in_file in testdata_path.glob("*.in"):
+        # Filename format: TTCC.in (e.g., 0000.in, 0001.in, 0100.in)
+        stem = in_file.stem
+        if len(stem) >= 4 and stem[:4].isdigit():
+            task_no = int(stem[:2])
+            task_cases[task_no] += 1
+        else:
+            # Unknown format, treat as task 0
+            task_cases[0] += 1
+
+    if not task_cases:
+        logger().warning(f"No .in files found in {testdata_path}")
+        return []
+
+    # Generate tasks list (sorted by task number)
+    # Distribute scores evenly to satisfy Meta validator (sum must be 100)
+    num_tasks = len(task_cases)
+    base_score = 100 // num_tasks
+    remainder = 100 % num_tasks
+
+    tasks = []
+    for idx, task_no in enumerate(sorted(task_cases.keys())):
+        # Give extra 1 point to first 'remainder' tasks to ensure sum is 100
+        task_score = base_score + (1 if idx < remainder else 0)
+        tasks.append({
+            "caseCount": task_cases[task_no],
+            "taskScore": task_score,
+            "timeLimit": default_time_limit,
+            "memoryLimit": default_memory_limit,
+        })
+
+    return tasks
+
+
+def cleanup_custom_testdata(submission_id: str):
+    """Remove custom test data directory after judging is complete."""
+    custom_dir = get_custom_testdata_root(submission_id)
+    if custom_dir.exists():
+        try:
+            shutil.rmtree(custom_dir)
+            logger().debug(
+                f"Cleaned up custom testdata [submission_id: {submission_id}]")
+        except Exception as exc:
+            logger().warning(
+                f"Failed to cleanup custom testdata [submission_id: {submission_id}]: {exc}"
+            )
+
+
+# === AC Code Support ===
+
+# Directory for AC code cache
+AC_CODE_DIR = TESTDATA_ROOT / "ac_code"
+AC_CODE_DIR.mkdir(exist_ok=True)
+
+
+def get_ac_code_root(problem_id: int) -> Path:
+    """Get the path for AC code cache."""
+    return AC_CODE_DIR / str(problem_id)
+
+
+def fetch_ac_code(problem_id: int) -> tuple:
+    """
+    Fetch AC code ZIP from backend server.
+    
+    Returns:
+        Tuple of (content_bytes, language_int)
+    """
+    logger().debug(f"fetch AC code [problem_id: {problem_id}]")
+    resp = rq.get(
+        f"{BACKEND_API}/problem/{problem_id}/ac-code",
+        params={
+            "token": SANDBOX_TOKEN,
+        },
+    )
+    handle_problem_response(resp)
+
+    # Language is passed in response header
+    language = resp.headers.get("X-AC-Code-Language")
+    language = int(language) if language else None
+
+    return resp.content, language
+
+
+def get_ac_code_checksum(problem_id: int) -> tuple:
+    """
+    Get checksum and language of AC code from backend.
+    
+    Returns:
+        Tuple of (checksum_str, language_int)
+    """
+    resp = rq.get(
+        f"{BACKEND_API}/problem/{problem_id}/ac-code-checksum",
+        params={
+            "token": SANDBOX_TOKEN,
+        },
+    )
+    handle_problem_response(resp)
+    data = resp.json().get("data", {})
+    if isinstance(data, dict):
+        return data.get("checksum"), data.get("language")
+    return data, None
+
+
+def ensure_ac_code(problem_id: int) -> tuple:
+    """
+    Ensure AC code for Trial Mode is up to date.
+    
+    Returns:
+        Tuple of (ac_code_path, language_int)
+    """
+    client = get_redis_client()
+    key = f"problem-{problem_id}-ac-code-checksum"
+    lock_key = f"{key}-lock"
+
+    ac_code_root = get_ac_code_root(problem_id)
+
+    with client.lock(lock_key, timeout=60):
+        curr_checksum = client.get(key)
+        if curr_checksum is not None:
+            curr_checksum = curr_checksum.decode()
+            try:
+                checksum, language = get_ac_code_checksum(problem_id)
+                if checksum and secrets.compare_digest(curr_checksum,
+                                                       checksum):
+                    logger().debug(
+                        f"AC code is up to date [problem_id: {problem_id}]")
+                    # Read cached language
+                    lang_file = ac_code_root / ".language"
+                    if lang_file.exists():
+                        language = int(lang_file.read_text().strip())
+                    return ac_code_root, language
+            except Exception as exc:
+                logger().warning(f"Failed to verify AC code checksum: {exc}")
+
+        logger().info(f"refresh AC code [problem_id: {problem_id}]")
+        ac_code_content, language = fetch_ac_code(problem_id)
+
+        if ac_code_root.exists():
+            shutil.rmtree(ac_code_root)
+        ac_code_root.mkdir(parents=True, exist_ok=True)
+
+        with ZipFile(io.BytesIO(ac_code_content)) as zf:
+            zf.extractall(ac_code_root)
+
+        # Cache language info
+        if language is not None:
+            (ac_code_root / ".language").write_text(str(language))
+
+        checksum = calc_checksum(ac_code_content)
+        client.setex(key, 600, checksum)
+
+        return ac_code_root, language
