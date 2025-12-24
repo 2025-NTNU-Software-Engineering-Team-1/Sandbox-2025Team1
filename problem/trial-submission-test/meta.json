@@ -4,6 +4,8 @@
         "taskScore": 100,
         "memoryLimit": 65536,
         "timeLimit": 3000,
-        "caseCount": 1
+        "caseCount": 4
     }]
 }
+
+
