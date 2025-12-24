@@ -2,6 +2,7 @@ import json
 import logging
 import tarfile
 import tempfile
+import os
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Optional

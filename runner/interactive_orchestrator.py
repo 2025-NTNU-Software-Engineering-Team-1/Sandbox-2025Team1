@@ -342,7 +342,7 @@ def orchestrate(args: argparse.Namespace):
     stu_res = tmpdir / "student.result"
     # sandbox_interactive argv layout:
     # [lang_id, compile, stdin, stdout, stderr, time_ms, mem_kb, large_stack, output_limit, proc_limit, allow_network_access, result_path]
-    allow_network_access = "0"  # 預設封網（seccomp 不載入 socket 系列）
+    allow_network_access = "1" if args.allow_network_access == "1" else "0"
     large_stack = "1"  # keep stack limit aligned with memory limit; allow_write is controlled via env
     student_cmd = [
         "sandbox_interactive",
@@ -602,6 +602,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=
         "Override student write permission; 1=allow, 0=deny. If omitted, write is denied.",
+    )
+    parser.add_argument(
+        "--allow-network-access",
+        choices=("0", "1"),
+        default="0",
+        help="Enable network syscalls in sandbox_interactive; 1=allow, 0=deny.",
     )
     parser.add_argument(
         "--pipe-mode",

@@ -70,6 +70,8 @@ def submit(submission_id: str):
 
         if use_default_case:
             # Trial with public test cases
+            # Note: Public test data should already contain both .in and .out files
+            # No need to generate .out files using AC code
             try:
                 ensure_public_testdata(problem_id)
                 testdata_path = get_public_testdata_root(problem_id)

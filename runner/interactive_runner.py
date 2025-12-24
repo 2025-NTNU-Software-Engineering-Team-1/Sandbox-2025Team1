@@ -101,6 +101,7 @@ class InteractiveRunner:
             "--pipe-mode",
             self.pipe_mode,
         ]
+        allow_network_access = "1" if self.network_mode and self.network_mode != "none" else "0"
         if self.teacher_first:
             command.append("--teacher-first")
         if case_path_container:
@@ -109,6 +110,7 @@ class InteractiveRunner:
             command += ["--allow-write-student", "1"]
         else:
             command += ["--allow-write-student", "0"]
+        command += ["--allow-network-access", allow_network_access]
 
         env = {}
         for key in ("KEEP_INTERACTIVE_TMP", "KEEP_INTERACTIVE_SUBMISSIONS"):
