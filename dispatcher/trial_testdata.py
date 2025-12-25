@@ -135,29 +135,42 @@ def prepare_custom_testdata(
     custom_dir = get_custom_testdata_root(submission_id)
     custom_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Download and extract custom test cases to temp directory
-    import tempfile
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
+    # Check if .in files already exist (rejudge scenario)
+    existing_in_files = list(custom_dir.glob("*.in"))
 
-        try:
-            testcases_content = download_custom_testcases(
-                custom_testcases_path)
-            with ZipFile(io.BytesIO(testcases_content)) as zf:
-                zf.extractall(temp_path)
-        except Exception as exc:
-            logger().error(
-                f"Failed to download/extract custom testcases: {exc}")
-            raise ValueError(f"Failed to download custom testcases: {exc}")
-
-        # 2. Convert filenames (0001.in -> 0000.in, all in task 00)
-        case_count = convert_custom_testcase_filenames(temp_path, custom_dir)
-        if case_count == 0:
-            raise ValueError("No .in files found in custom testcases")
-
+    if existing_in_files:
+        # Rejudge: only remove .out files, keep .in files
         logger().info(
-            f"Prepared {case_count} custom test cases for submission {submission_id}"
+            f"Rejudge detected: removing existing .out files for submission {submission_id}"
         )
+        for out_file in custom_dir.glob("*.out"):
+            out_file.unlink()
+        case_count = len(existing_in_files)
+    else:
+        # First submission: download and extract .in files
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+
+            try:
+                testcases_content = download_custom_testcases(
+                    custom_testcases_path)
+                with ZipFile(io.BytesIO(testcases_content)) as zf:
+                    zf.extractall(temp_path)
+            except Exception as exc:
+                logger().error(
+                    f"Failed to download/extract custom testcases: {exc}")
+                raise ValueError(f"Failed to download custom testcases: {exc}")
+
+            # Convert filenames (0001.in -> 0000.in, all in task 00)
+            case_count = convert_custom_testcase_filenames(
+                temp_path, custom_dir)
+            if case_count == 0:
+                raise ValueError("No .in files found in custom testcases")
+
+    logger().info(
+        f"Prepared {case_count} custom test cases for submission {submission_id}"
+    )
 
     # 3. Generate .out files using AC code (unless Interactive mode)
     execution_mode = getattr(meta, "executionMode", ExecutionMode.GENERAL)

@@ -60,12 +60,14 @@ class ArtifactCollector:
         total_size = 0
         with ZipFile(buf, "w") as zf:
             # input - test case input (optional)
+            case_name = f"{task_no:02d}{case_no:02d}"
+            # input - test case input (optional)
             if input_data is not None:
-                zf.writestr("input", input_data)
+                zf.writestr(f"{case_name}.in", input_data)
                 total_size += len(input_data.encode("utf-8", "ignore"))
             # answer - expected output from AC code (optional)
             if answer_data is not None:
-                zf.writestr("answer", answer_data)
+                zf.writestr(f"{case_name}.out", answer_data)
                 total_size += len(answer_data.encode("utf-8", "ignore"))
             # stdout/stderr - always write to preserve data from sandbox result
             # even if empty, to maintain consistency with backend expectations

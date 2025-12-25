@@ -376,6 +376,64 @@ def get_ac_code_checksum(problem_id: int) -> tuple:
     return data, None
 
 
+def _normalize_ac_code_filename(ac_code_root: Path, language: int) -> None:
+    """
+    Ensure AC code has the correct filename for sandbox execution.
+    
+    Sandbox expects:
+    - Python: main.py
+    - C: main.c
+    - C++: main.cpp
+    
+    If the extracted file has a different name (e.g., ac_code.py),
+    rename it to the expected name.
+    """
+    expected_names = {
+        Language.PY: "main.py",
+        Language.C: "main.c",
+        Language.CPP: "main.cpp",
+    }
+
+    extensions = {
+        Language.PY: ".py",
+        Language.C: ".c",
+        Language.CPP: ".cpp",
+    }
+
+    try:
+        lang_enum = Language(language)
+    except ValueError:
+        logger().warning(f"Unknown language code: {language}")
+        return
+
+    expected_name = expected_names.get(lang_enum)
+    extension = extensions.get(lang_enum)
+
+    if not expected_name or not extension:
+        return
+
+    expected_path = ac_code_root / expected_name
+
+    # If expected file already exists, nothing to do
+    if expected_path.exists():
+        return
+
+    # Find source files with the correct extension
+    source_files = list(ac_code_root.glob(f"*{extension}"))
+
+    if not source_files:
+        logger().warning(
+            f"No {extension} files found in AC code directory: {ac_code_root}")
+        return
+
+    # Use the first source file found
+    source_file = source_files[0]
+
+    logger().info(
+        f"Renaming AC code file: {source_file.name} -> {expected_name}")
+    source_file.rename(expected_path)
+
+
 def ensure_ac_code(problem_id: int) -> tuple:
     """
     Ensure AC code for Trial Mode is up to date.
@@ -403,6 +461,9 @@ def ensure_ac_code(problem_id: int) -> tuple:
                     lang_file = ac_code_root / ".language"
                     if lang_file.exists():
                         language = int(lang_file.read_text().strip())
+                    # Ensure filename is normalized even for cached files
+                    if language is not None:
+                        _normalize_ac_code_filename(ac_code_root, language)
                     return ac_code_root, language
             except Exception as exc:
                 logger().warning(f"Failed to verify AC code checksum: {exc}")
@@ -416,6 +477,10 @@ def ensure_ac_code(problem_id: int) -> tuple:
 
         with ZipFile(io.BytesIO(ac_code_content)) as zf:
             _safe_extract_zip(zf, ac_code_root)
+
+        # Normalize filename to expected name (e.g., ac_code.py -> main.py)
+        if language is not None:
+            _normalize_ac_code_filename(ac_code_root, language)
 
         # Cache language info
         if language is not None:

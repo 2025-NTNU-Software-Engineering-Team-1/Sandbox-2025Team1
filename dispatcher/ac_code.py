@@ -103,8 +103,9 @@ def generate_ac_outputs(
     for in_file in sorted(testdata_dir.glob("*.in")):
         out_file = in_file.with_suffix(".out")
 
-        # Skip if .out already exists
-        if out_file.exists():
+        # Skip if .out already exists and is non-empty
+        # (empty .out files may be from previous failed attempts)
+        if out_file.exists() and out_file.stat().st_size > 0:
             logger().debug(f"Skipping {in_file.name} - .out already exists")
             continue
 
