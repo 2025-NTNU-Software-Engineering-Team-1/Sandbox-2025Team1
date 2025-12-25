@@ -280,3 +280,94 @@ def test_sandbox_run_skips_stdin_bind_when_missing(monkeypatch, tmp_path):
     assert all(
         mount.get("bind") != "/testdata/in"
         for mount in client.last_volumes.values())
+
+
+@pytest.mark.parametrize(
+    ("network_mode", "expected_flag", "expected_disabled"),
+    [
+        ("none", "0", True),
+        ("noj-net-1", "1", False),
+    ],
+)
+def test_sandbox_run_sets_allow_write_and_network(monkeypatch, tmp_path,
+                                                  network_mode, expected_flag,
+                                                  expected_disabled):
+    from runner.sandbox import Sandbox
+
+    class DummyDockerClient:
+
+        def __init__(self):
+            self.container_kwargs = None
+            self.host_config_kwargs = None
+
+        def create_host_config(self, **kwargs):
+            self.host_config_kwargs = kwargs
+            return {"_host_config": kwargs}
+
+        def create_container(
+            self,
+            image,
+            command,
+            volumes,
+            network_disabled,
+            working_dir,
+            host_config,
+            environment=None,
+        ):
+            self.container_kwargs = {
+                "image": image,
+                "command": command,
+                "volumes": volumes,
+                "network_disabled": network_disabled,
+                "working_dir": working_dir,
+                "host_config": host_config,
+                "environment": environment,
+            }
+            return {"Id": "dummy", "Warning": None}
+
+        def start(self, container):
+            return None
+
+        def wait(self, container, timeout=None):
+            return {"StatusCode": 0}
+
+        def remove_container(self, container, v=True, force=True):
+            return None
+
+    def _fake_get(self, container, path, filename):
+        if filename == "result":
+            return "Exited Normally\nWEXITSTATUS() = 0\n0\n0\n"
+        return ""
+
+    monkeypatch.chdir(pathlib.Path(__file__).resolve().parents[1])
+    client = DummyDockerClient()
+    monkeypatch.setattr("runner.sandbox.docker.APIClient",
+                        lambda base_url: client)
+    monkeypatch.setattr(Sandbox, "get", _fake_get)
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    stdin_path = tmp_path / "input.in"
+    stdin_path.write_text("1")
+
+    runner = Sandbox(
+        time_limit=1000,
+        mem_limit=1024,
+        image="dummy",
+        src_dir=str(src_dir),
+        lang_id="0",
+        compile_need=False,
+        stdin_path=str(stdin_path),
+        allow_write=True,
+        network_mode=network_mode,
+    )
+    runner.run()
+
+    parts = client.container_kwargs["command"].split()
+    assert parts[-2] == expected_flag
+    assert client.container_kwargs["environment"] == {
+        "SANDBOX_ALLOW_WRITE": "1"
+    }
+    assert client.container_kwargs["network_disabled"] is expected_disabled
+    expected_net_mode = None if expected_disabled else network_mode
+    assert client.host_config_kwargs["network_mode"] == expected_net_mode

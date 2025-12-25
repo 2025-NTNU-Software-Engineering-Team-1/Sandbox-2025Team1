@@ -1,5 +1,8 @@
 import logging
+from io import BytesIO
 from pathlib import Path
+from zipfile import ZipFile
+
 from dispatcher.artifact_collector import ArtifactCollector
 
 
@@ -52,3 +55,30 @@ def test_artifact_collector_snapshot_and_upload(tmp_path, monkeypatch):
     case_call = calls[0]
     assert "artifact/upload/case" in case_call["url"]
     assert case_call["data_len"] > 0
+
+
+def test_artifact_collector_skips_large_file(tmp_path, monkeypatch):
+    monkeypatch.setattr("dispatcher.artifact_collector._CASE_FILE_LIMIT", 10)
+    monkeypatch.setattr("dispatcher.artifact_collector._CASE_ZIP_LIMIT", 50)
+
+    workdir = tmp_path / "submissions" / "s2" / "src"
+    workdir.mkdir(parents=True, exist_ok=True)
+
+    collector = ArtifactCollector(logger=logging.getLogger(__name__))
+    collector.snapshot_before_case("s2", 0, 0, workdir)
+    (workdir / "small.txt").write_text("ok")
+    (workdir / "large.bin").write_bytes(b"x" * 20)
+
+    collector.record_case_artifact("s2",
+                                   0,
+                                   0,
+                                   workdir,
+                                   stdout="out",
+                                   stderr="")
+
+    payload = collector._case_artifacts["s2"][0][0]
+    with ZipFile(BytesIO(payload)) as zf:
+        names = set(zf.namelist())
+    assert "small.txt" in names
+    assert "large.bin" not in names
+    assert "stdout" in names

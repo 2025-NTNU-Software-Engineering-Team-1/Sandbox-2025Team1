@@ -42,15 +42,34 @@ class ProblemParser:
 
             # read testcase
             prob_data['testcase'] = []
+            total_tasks = len(prob_data['meta']['tasks'])
             for i, task in enumerate(prob_data['meta']['tasks']):
                 prob_data['testcase'].append([])
                 for j in range(task['caseCount']):
-                    with open(testcase_dir / f'{i:02d}{j:02d}.in') as f:
-                        t_in = f.read()
-                    with open(testcase_dir / f'{i:02d}{j:02d}.out') as f:
-                        t_out = f.read()
+                    t_in = self._read_case_file(testcase_dir, i, j, ".in",
+                                                total_tasks)
+                    t_out = self._read_case_file(testcase_dir, i, j, ".out",
+                                                 total_tasks)
                     prob_data['testcase'][i].append({
                         'in': t_in,
                         'out': t_out,
                     })
         return self.problem
+
+    def _read_case_file(self, testcase_dir: pathlib.Path, task_idx: int,
+                        case_idx: int, suffix: str, total_tasks: int) -> str:
+        candidates = [
+            testcase_dir / f'{task_idx:02d}{case_idx:02d}{suffix}',
+            testcase_dir / f'{task_idx}' / f'{case_idx}{suffix}',
+            testcase_dir / f'{task_idx:02d}' / f'{case_idx:02d}{suffix}',
+        ]
+        if total_tasks == 1:
+            candidates.append(testcase_dir / f'{case_idx}' /
+                              f'{case_idx}{suffix}')
+        for path in candidates:
+            if path.is_file():
+                return path.read_text()
+        expected = ", ".join(str(p) for p in candidates)
+        raise FileNotFoundError(
+            f"missing testcase file for task={task_idx} case={case_idx}: {expected}"
+        )

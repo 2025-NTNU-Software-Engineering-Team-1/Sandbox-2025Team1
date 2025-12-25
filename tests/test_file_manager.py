@@ -152,6 +152,36 @@ def test_extract_zip_rejects_symlink(tmp_path):
         )
 
 
+def test_extract_code_rejects_non_main(tmp_path):
+    meta = _build_meta(SubmissionMode.CODE, language=2)
+    testdata_root = tmp_path / "testdata"
+    _prepare_testdata(testdata_root)
+    archive = _build_zip({"hello.py": "print('hi')"})
+    with pytest.raises(ValueError):
+        file_manager.extract(
+            root_dir=tmp_path,
+            submission_id="code-bad-name",
+            meta=meta,
+            source=archive,
+            testdata=testdata_root,
+        )
+
+
+def test_extract_code_blocks_path_traversal(tmp_path):
+    meta = _build_meta(SubmissionMode.CODE, language=2)
+    testdata_root = tmp_path / "testdata"
+    _prepare_testdata(testdata_root)
+    archive = _build_zip({"../evil.py": "x"})
+    with pytest.raises(ValueError):
+        file_manager.extract(
+            root_dir=tmp_path,
+            submission_id="code-traversal",
+            meta=meta,
+            source=archive,
+            testdata=testdata_root,
+        )
+
+
 class DummyLock:
 
     def __enter__(self):

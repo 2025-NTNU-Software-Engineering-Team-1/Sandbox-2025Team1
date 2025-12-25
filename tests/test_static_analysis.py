@@ -186,3 +186,56 @@ def test_makefile_normal_paths_allowed(tmp_path):
 
     assert "main.c" in source_names
     assert "helper.c" in source_names
+
+
+def test_get_violations_python_blacklist_imports_and_functions():
+    analyzer = StaticAnalyzer()
+    facts = {
+        "imports": [{
+            "name": "os",
+            "line": 1,
+        }],
+        "function_calls": [{
+            "name": "eval",
+            "line": 2,
+        }],
+        "syntax": [{
+            "name": "return",
+            "line": 3,
+        }],
+    }
+    rules = {
+        "model": "black",
+        "imports": ["os"],
+        "functions": ["eval"],
+        "syntax": ["return"],
+    }
+    violations = analyzer.get_violations(facts, rules, Language.PY)
+    assert violations["model"] == "black"
+    assert violations["imports"][0]["content"] == "os"
+    assert violations["functions"][0]["content"] == "eval"
+    assert violations["syntax"][0]["content"] == "return"
+    assert "headers" not in violations
+
+
+def test_get_violations_python_whitelist_blocks_unlisted_import():
+    analyzer = StaticAnalyzer()
+    facts = {
+        "imports": [{
+            "name": "os",
+            "line": 1,
+        }, {
+            "name": "sys",
+            "line": 2,
+        }],
+        "function_calls": [],
+        "syntax": [],
+    }
+    rules = {
+        "model": "white",
+        "imports": ["os"],
+        "functions": [],
+        "syntax": [],
+    }
+    violations = analyzer.get_violations(facts, rules, Language.PY)
+    assert any(item["content"] == "sys" for item in violations["imports"])
