@@ -165,7 +165,8 @@ def test_prepare_teacher_for_case_copies_resources(tmp_path):
     assert (teacher_case_dir / "data.txt").read_text() == "data"
 
 
-def test_copy_resource_for_case_flattens_nested(tmp_path):
+def test_copy_resource_for_case_preserves_nested(tmp_path):
+    """Test that copy_resource_for_case preserves directory structure."""
     submission_path = tmp_path / "submissions" / "s5"
     resource_dir = submission_path / "resource_data" / "nested"
     resource_dir.mkdir(parents=True, exist_ok=True)
@@ -180,5 +181,38 @@ def test_copy_resource_for_case_flattens_nested(tmp_path):
         task_no=0,
         case_no=0,
     )
-    assert (case_dir / "file.txt").read_text() == "value"
-    assert (case_dir / "file.txt") in copied
+    # Should preserve directory structure: nested/file.txt not file.txt
+    assert (case_dir / "nested" / "file.txt").read_text() == "value"
+    assert (case_dir / "nested" / "file.txt") in copied
+
+
+def test_copy_resource_for_case_handles_same_filename_different_dirs(tmp_path):
+    """Test that same filenames in different subdirectories don't overwrite each other."""
+    submission_path = tmp_path / "submissions" / "s6"
+    resource_dir = submission_path / "resource_data"
+
+    # Create two files with same name in different directories
+    dir1 = resource_dir / "dir1"
+    dir2 = resource_dir / "dir2"
+    dir1.mkdir(parents=True, exist_ok=True)
+    dir2.mkdir(parents=True, exist_ok=True)
+
+    (dir1 / "0000_config.txt").write_text("config from dir1")
+    (dir2 / "0000_config.txt").write_text("config from dir2")
+
+    case_dir = submission_path / "src" / "cases" / "0000"
+    case_dir.mkdir(parents=True, exist_ok=True)
+
+    copied = copy_resource_for_case(
+        submission_path=submission_path,
+        case_dir=case_dir,
+        task_no=0,
+        case_no=0,
+    )
+
+    # Both files should exist in their respective directories
+    assert (case_dir / "dir1" / "config.txt").exists()
+    assert (case_dir / "dir2" / "config.txt").exists()
+    assert (case_dir / "dir1" / "config.txt").read_text() == "config from dir1"
+    assert (case_dir / "dir2" / "config.txt").read_text() == "config from dir2"
+    assert len(copied) == 2

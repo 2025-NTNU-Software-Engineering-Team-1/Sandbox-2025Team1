@@ -104,8 +104,11 @@ def copy_resource_for_case(
     """
     Copy resource files for specific case into case_dir, stripping prefix.
     Reads from submission_path/resource_data/.
+    Preserves directory structure relative to resource_data/ to avoid name conflicts.
     
-    Example: 0000_input.bmp -> case_dir/input.bmp
+    Example: 
+      resource_data/subdir/0000_input.bmp -> case_dir/subdir/input.bmp
+      resource_data/0000_config.txt -> case_dir/config.txt
     """
     resource_dir = submission_path / "resource_data"
     if not resource_dir.exists():
@@ -121,9 +124,22 @@ def copy_resource_for_case(
         if not name.startswith(prefix):
             continue
         dest_name = name[len(prefix):]
-        dest = case_dir / dest_name
+
+        # Preserve relative directory structure
+        rel_path = path.relative_to(resource_dir)
+        rel_dir = rel_path.parent
+        dest = case_dir / rel_dir / dest_name
+
         try:
+            # Ensure parent directory exists
+            dest.parent.mkdir(parents=True, exist_ok=True)
             if dest.exists():
+                logger().warning(
+                    "Overwriting existing resource file [task=%s case=%s]: %s",
+                    task_no,
+                    case_no,
+                    dest,
+                )
                 dest.unlink()
             shutil.copy(path, dest)
             copied.append(dest)
