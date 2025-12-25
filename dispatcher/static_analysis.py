@@ -135,9 +135,9 @@ def format_sa_failure_message(message: str) -> str:
     ) or "Static Analysis Not Passed"
 
 
-def build_sa_ce_task_content(meta: "Meta", stderr: str) -> dict:
-    """Build task content for CE (Compile Error) status for all cases."""
-    return make_all_cases_result(meta=meta, status="CE", stderr=stderr)
+def build_sa_ae_task_content(meta: "Meta", stderr: str) -> dict:
+    """Build task content for AE (Analysis Error) status for all cases."""
+    return make_all_cases_result(meta=meta, status="AE", stderr=stderr)
 
 
 def run_static_analysis(
@@ -183,21 +183,21 @@ def run_static_analysis(
             return True, payload, None
 
         stderr = format_sa_failure_message(analysis_result.message)
-        return False, payload, build_sa_ce_task_content(meta, stderr)
+        return False, payload, build_sa_ae_task_content(meta, stderr)
 
     except StaticAnalysisError as exc:
         logger().error(f"Static analyzer error: {exc}", exc_info=True)
         ar = AnalysisResult(success=False, message=str(exc))
         payload = build_sa_payload(ar, "fail")
         stderr = format_sa_failure_message(str(exc))
-        return False, payload, build_sa_ce_task_content(meta, stderr)
+        return False, payload, build_sa_ae_task_content(meta, stderr)
     except Exception as exc:
         logger().error(f"Unexpected error during static analysis: {exc}",
                        exc_info=True)
         ar = AnalysisResult(success=False, message=str(exc))
         payload = build_sa_payload(ar, "fail")
         stderr = format_sa_failure_message(str(exc))
-        return False, payload, build_sa_ce_task_content(meta, stderr)
+        return False, payload, build_sa_ae_task_content(meta, stderr)
 
 
 class StaticAnalysisError(Exception):

@@ -1,0 +1,15 @@
+{
+    "model": "black",
+    "syntax": [
+        "while",
+        "for"
+    ],
+    "imports": [
+        "os",
+        "subprocess"
+    ],
+    "functions": [
+        "eval",
+        "exec"
+    ]
+}

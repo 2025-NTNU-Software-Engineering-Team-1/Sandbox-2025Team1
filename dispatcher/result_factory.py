@@ -25,7 +25,7 @@ def make_case_result(
     Build a single case result (lowercase keys, used in task_content).
     
     Args:
-        status: Result status ("JE", "CE", "AC", "WA", "TLE", "MLE", "RE", "OLE")
+        status: Result status ("JE", "CE", "AE", "AC", "WA", "TLE", "MLE", "RE", "OLE")
         stderr: Error output
         stdout: Standard output
         exit_code: Process exit code

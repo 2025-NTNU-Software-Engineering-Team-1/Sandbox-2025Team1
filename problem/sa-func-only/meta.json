@@ -1,0 +1,17 @@
+{
+    "language": 0,
+    "submissionMode": 0,
+    "executionMode": 1,
+    "buildStrategy": 2,
+    "assetPaths": {
+        "makefile": "sa-func-only/makefile.zip"
+    },
+    "tasks": [
+        {
+            "taskScore": 100,
+            "memoryLimit": 65536,
+            "timeLimit": 1000,
+            "caseCount": 2
+        }
+    ]
+}

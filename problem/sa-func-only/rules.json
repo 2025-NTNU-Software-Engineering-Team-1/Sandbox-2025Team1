@@ -1,0 +1,14 @@
+{
+    "model": "black",
+    "syntax": [
+        "for",
+        "recursive"
+    ],
+    "headers": [
+        "algorithm"
+    ],
+    "functions": [
+        "sort",
+        "qsort"
+    ]
+}

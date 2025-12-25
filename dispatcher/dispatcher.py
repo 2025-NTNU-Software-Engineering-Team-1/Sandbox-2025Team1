@@ -26,7 +26,7 @@ from .utils import logger
 from .pipeline import fetch_problem_rules
 from .artifact_collector import ArtifactCollector
 
-from .static_analysis import run_static_analysis, build_sa_ce_task_content
+from .static_analysis import run_static_analysis, build_sa_ae_task_content
 from .result_factory import make_runner_result, make_all_cases_result
 from .custom_checker import ensure_custom_checker, run_custom_checker_case
 from .custom_scorer import ensure_custom_scorer, run_custom_scorer
@@ -189,7 +189,7 @@ class Dispatcher(threading.Thread):
     def _handle_sa_failure(self, submission_id: str, payload: dict,
                            task_content: dict):
         logger().warning(
-            f"Static analysis failed for {submission_id}, marking CE")
+            f"Static analysis failed for {submission_id}, marking AE")
         if self.contains(submission_id):
             if payload:
                 self.sa_payloads[submission_id] = payload
@@ -653,7 +653,7 @@ class Dispatcher(threading.Thread):
             # Report CE instead of crashing/raising
             self.result[submission_id] = (
                 submission_config,
-                build_sa_ce_task_content(submission_config,
+                build_sa_ae_task_content(submission_config,
                                          f"Build Failed: {exc}"),
             )
             self.on_submission_complete(submission_id)
@@ -823,7 +823,7 @@ class Dispatcher(threading.Thread):
                     logger().error(f"Error in SA job for {submission_id}: {e}",
                                    exc_info=True)
                     msg = f"Static Analysis Exception: {e}"
-                    fail_content = build_sa_ce_task_content(
+                    fail_content = build_sa_ae_task_content(
                         submission_config,
                         msg,
                     )

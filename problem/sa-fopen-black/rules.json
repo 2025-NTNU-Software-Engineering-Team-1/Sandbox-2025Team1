@@ -1,0 +1,13 @@
+{
+    "model": "black",
+    "syntax": [],
+    "headers": [],
+    "functions": [
+        "fopen",
+        "fwrite",
+        "fread",
+        "fclose",
+        "fprintf",
+        "fscanf"
+    ]
+}
