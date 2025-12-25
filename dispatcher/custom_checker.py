@@ -48,8 +48,17 @@ def run_custom_checker_case(
     docker_url: str,
     student_workdir: Path | None = None,
     teacher_dir: Path | None = None,
+    ai_checker_config: dict | None = None,
+    problem_id: int | None = None,
 ) -> Dict[str, str]:
-    """Execute custom checker for a single case and return status/message."""
+    """Execute custom checker for a single case and return status/message.
+
+    Args:
+        ai_checker_config: Optional dict with {enabled, model} from Meta
+        problem_id: Required if ai_checker_config is enabled
+    """
+    from .testdata import fetch_checker_api_key
+
     workdir = checker_path.parent / "work" / case_no
     workdir.mkdir(parents=True, exist_ok=True)
 
@@ -68,6 +77,18 @@ def run_custom_checker_case(
         teacher_dir_host = translator.to_host(teacher_dir) if (
             teacher_dir is not None) else None
 
+        # AI Checker setup
+        env = {}
+        enable_ai_network = False
+        if ai_checker_config and ai_checker_config.get(
+                "enabled") and problem_id:
+            api_key = fetch_checker_api_key(problem_id)
+            if api_key:
+                env["AI_API_KEY"] = api_key
+                env["AI_MODEL"] = ai_checker_config.get(
+                    "model", "gemini-2.5-flash")
+                enable_ai_network = True
+
         runner = CustomCheckerRunner(
             submission_id=submission_id,
             case_no=case_no,
@@ -81,6 +102,8 @@ def run_custom_checker_case(
             if student_dir_host is not None else None,
             teacher_dir=str(teacher_dir_host)
             if teacher_dir_host is not None else None,
+            env=env if env else None,
+            enable_ai_network=enable_ai_network,
         )
         result = runner.run()
     except CustomCheckerError as exc:

@@ -41,6 +41,7 @@ class Meta(BaseModel):
     resourceDataTeacher: bool = False
     allowRead: bool = False
     allowWrite: bool = False
+    aiChecker: Optional[dict] = None  # AI Checker config: {enabled, model}
 
     @validator("executionMode", pre=True)
     def _coerce_execution_mode(cls, v):

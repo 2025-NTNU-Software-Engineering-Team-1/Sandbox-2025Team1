@@ -1,7 +1,13 @@
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict
 import docker
+
+# Fixed timeout for AI Checker (15 seconds)
+AI_CHECKER_TIMEOUT_SEC = 15
+
+# System router image for AI Checker whitelist
+SYSTEM_ROUTER_IMAGE = "noj-system-router:latest"
 
 
 class CustomCheckerError(Exception):
@@ -20,6 +26,9 @@ class CustomCheckerRunner:
     mem_limit_kb: int
     student_dir: str | None = None
     teacher_dir: str | None = None
+    env: dict | None = None  # Environment variables for container
+    enable_ai_network: bool = False  # Enable AI network (system_router)
+    _router_container_id: str | None = field(default=None, repr=False)
 
     def run(self) -> Dict[str, str]:
         client = docker.APIClient(base_url=self.docker_url)
@@ -39,13 +48,21 @@ class CustomCheckerRunner:
                 "bind": "/workspace/teacher",
                 "mode": "ro"
             }
+
+        # Determine network mode and timeout
+        if self.enable_ai_network:
+            network_mode = self._start_system_router(client)
+            timeout_sec = AI_CHECKER_TIMEOUT_SEC
+        else:
+            network_mode = "none"
+            timeout_sec = max(5, math.ceil(self.time_limit_ms / 1000) * 5)
+
         host_config = client.create_host_config(
             binds=binds,
-            network_mode="none",
+            network_mode=network_mode,
             mem_limit=f"{max(self.mem_limit_kb,0)}k",
             tmpfs={"/tmp": "rw,noexec,nosuid"},
         )
-        timeout_sec = max(5, math.ceil(self.time_limit_ms / 1000) * 5)
         command = [
             "python3",
             f"/workspace/{self.checker_relpath}",
@@ -58,6 +75,7 @@ class CustomCheckerRunner:
             command=command,
             working_dir="/workspace",
             host_config=host_config,
+            environment=self.env or {},
         )
         try:
             client.start(container)
@@ -77,6 +95,8 @@ class CustomCheckerRunner:
                 client.remove_container(container, v=True, force=True)
             except Exception:
                 pass
+            # Cleanup router container
+            self._cleanup_system_router(client)
 
         status_code = exit_status.get("StatusCode", 1) if exit_status else 1
         if exit_status is None:
@@ -86,3 +106,32 @@ class CustomCheckerRunner:
             "stdout": logs_stdout,
             "stderr": logs_stderr,
         }
+
+    def _start_system_router(self, client: docker.APIClient) -> str:
+        """Start system_router container for AI Checker network whitelist."""
+        try:
+            # Create router container with NET_ADMIN capability
+            host_config = client.create_host_config(cap_add=["NET_ADMIN"], )
+            router = client.create_container(
+                image=SYSTEM_ROUTER_IMAGE,
+                host_config=host_config,
+                detach=True,
+            )
+            client.start(router)
+            self._router_container_id = router["Id"]
+            # Return network mode to share router's network
+            return f"container:{self._router_container_id}"
+        except Exception as exc:
+            raise CustomCheckerError(
+                f"Failed to start system_router: {exc}") from exc
+
+    def _cleanup_system_router(self, client: docker.APIClient):
+        """Stop and remove system_router container."""
+        if self._router_container_id:
+            try:
+                client.stop(self._router_container_id, timeout=5)
+                client.remove_container(self._router_container_id, force=True)
+            except Exception:
+                pass
+            finally:
+                self._router_container_id = None

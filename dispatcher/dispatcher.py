@@ -1327,6 +1327,37 @@ class Dispatcher(threading.Thread):
                     )
         if collect_artifacts:
             try:
+                # Only read input and answer for trial submissions
+                # Normal submissions should only collect student artifacts
+                input_data = None
+                answer_data = None
+                is_trial = submission_id in self.trial_submissions
+                if is_trial:
+                    testcase_dir = self.SUBMISSION_DIR / submission_id / "testcase"
+                    in_file = testcase_dir / f"{case_no}.in"
+                    out_file = testcase_dir / f"{case_no}.out"
+                    if in_file.exists():
+                        try:
+                            input_data = in_file.read_text(encoding="utf-8",
+                                                           errors="replace")
+                        except Exception as exc:
+                            logger().warning(
+                                "read input file failed [id=%s case=%s]: %s",
+                                submission_id,
+                                case_no,
+                                exc,
+                            )
+                    if out_file.exists():
+                        try:
+                            answer_data = out_file.read_text(encoding="utf-8",
+                                                             errors="replace")
+                        except Exception as exc:
+                            logger().warning(
+                                "read answer file failed [id=%s case=%s]: %s",
+                                submission_id,
+                                case_no,
+                                exc,
+                            )
                 self.artifact_collector.record_case_artifact(
                     submission_id=submission_id,
                     task_no=int(case_no[:2]),
@@ -1334,6 +1365,8 @@ class Dispatcher(threading.Thread):
                     workdir=case_dir,
                     stdout=res.get("Stdout", ""),
                     stderr=res.get("Stderr", ""),
+                    input_data=input_data,
+                    answer_data=answer_data,
                 )
             except Exception as exc:
                 logger().warning(

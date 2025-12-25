@@ -425,3 +425,39 @@ def ensure_ac_code(problem_id: int) -> tuple:
         client.setex(key, 600, checksum)
 
         return ac_code_root, language
+
+
+# === AI Checker Support ===
+
+
+def fetch_checker_api_key(problem_id: int) -> str | None:
+    """
+    Fetch AI API key for custom checker from backend.
+
+    Returns:
+        API key string, or None if not available/configured.
+    """
+    logger().debug(f"fetch checker API key [problem_id: {problem_id}]")
+    try:
+        resp = rq.get(
+            f"{BACKEND_API}/problem/{problem_id}/checker-api-key",
+            params={
+                "token": SANDBOX_TOKEN,
+            },
+        )
+        if resp.status_code == 404:
+            # AI Checker not enabled or API Key not configured
+            return None
+        if resp.status_code == 401:
+            logger().error("Invalid sandbox token for checker API key request")
+            return None
+        if not resp.ok:
+            logger().warning(
+                f"Failed to fetch checker API key: {resp.status_code} {resp.text}"
+            )
+            return None
+        data = resp.json().get("data", {})
+        return data.get("apiKey")
+    except Exception as exc:
+        logger().warning(f"Exception fetching checker API key: {exc}")
+        return None

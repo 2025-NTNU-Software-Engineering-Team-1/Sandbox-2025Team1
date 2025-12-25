@@ -1,0 +1,28 @@
+{
+    "language": 4,
+    "submissionMode": 0,
+    "buildStrategy": "compile",
+    "executionMode": "general",
+    "customChecker": true,
+    "aiChecker": {
+        "enabled": true,
+        "model": "gemini-2.5-flash"
+    },
+    "tasks": [
+        {
+            "taskScore": 50,
+            "memoryLimit": 256,
+            "timeLimit": 15000,
+            "caseCount": 2
+        },
+        {
+            "taskScore": 50,
+            "memoryLimit": 256,
+            "timeLimit": 15000,
+            "caseCount": 2
+        }
+    ],
+    "assetPaths": {
+        "checker": "problem/ai-checker-test/custom_checker.py"
+    }
+}
