@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from dispatcher.static_analysis import StaticAnalyzer
+from dispatcher.static_analysis import StaticAnalyzer, _collect_sources_from_makefile
 from dispatcher.constant import Language
 
 BASE = Path(__file__).resolve().parent
@@ -132,3 +132,57 @@ def test_zip_static_analysis_disallowed_language_files(tmp_path):
     )
     assert not res.is_success()
     assert "Disallowed language files" in res.message
+
+
+# === Path Traversal Protection Tests ===
+
+
+def test_makefile_path_traversal_blocked(tmp_path, caplog):
+    """Makefile 中的 ../ 路徑應該被阻擋"""
+    import logging
+    caplog.set_level(logging.WARNING)
+
+    # 建立目錄結構
+    src_dir = tmp_path / "submission" / "src"
+    src_dir.mkdir(parents=True)
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+
+    # 在目錄外建立一個檔案
+    (outside_dir / "secret.c").write_text("// secret code")
+
+    # 建立包含路徑穿越的 Makefile
+    (src_dir / "Makefile").write_text("CC=gcc\n"
+                                      "SOURCES=main.c ../../outside/secret.c\n"
+                                      "all:\n\t$(CC) $(SOURCES)\n")
+    (src_dir / "main.c").write_text("int main() { return 0; }")
+
+    # 收集原始檔
+    sources = _collect_sources_from_makefile(src_dir, Language.C)
+
+    # 應該只包含 main.c，不應包含 secret.c
+    source_names = [s.name for s in sources]
+    assert "main.c" in source_names
+    assert "secret.c" not in source_names
+
+    # 應該有警告日誌
+    assert "Path traversal blocked" in caplog.text
+
+
+def test_makefile_normal_paths_allowed(tmp_path):
+    """Makefile 中的正常路徑應該正常處理"""
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    subdir = src_dir / "lib"
+    subdir.mkdir()
+
+    (src_dir / "main.c").write_text("int main() { return 0; }")
+    (subdir / "helper.c").write_text("void help() {}")
+    (src_dir / "Makefile").write_text("SOURCES=main.c lib/helper.c\n"
+                                      "all:\n\tgcc $(SOURCES)\n")
+
+    sources = _collect_sources_from_makefile(src_dir, Language.C)
+    source_names = [s.name for s in sources]
+
+    assert "main.c" in source_names
+    assert "helper.c" in source_names

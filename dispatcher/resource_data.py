@@ -19,6 +19,12 @@ def _copy_from_extracted(
     """
     Copy files from extracted/ directory to target_dir.
     Returns target_dir if successful, None if asset not configured.
+    
+    Args:
+        problem_id: Problem ID
+        asset_type: Type of asset (resource_data, resource_data_teacher, etc.)
+        target_dir: Target directory to copy to
+        clean: If True, remove target_dir before copying. If False, merge with existing files.
     """
     extracted_dir = ensure_extracted_resource(problem_id, asset_type)
     if not extracted_dir or not extracted_dir.exists():
@@ -32,9 +38,23 @@ def _copy_from_extracted(
         for item in extracted_dir.iterdir():
             dest = target_dir / item.name
             if item.is_dir():
-                shutil.copytree(item, dest)
+                if dest.exists():
+                    # 目錄已存在時，遞迴合併而非覆蓋
+                    logger().debug(
+                        f"Merging directory {item.name} into {dest}")
+                    shutil.copytree(item, dest, dirs_exist_ok=True)
+                else:
+                    shutil.copytree(item, dest)
             else:
+                if dest.exists():
+                    logger().debug(f"Overwriting existing file: {dest}")
                 shutil.copy2(item, dest)
+                # 確保複製後的檔案對 sandbox UID 可讀
+                try:
+                    dest.chmod(0o644)
+                except Exception as perm_exc:
+                    logger().warning(
+                        f"Failed to set permissions on {dest}: {perm_exc}")
     except Exception as exc:
         raise ResourceDataError(f"failed to copy {asset_type}: {exc}") from exc
 

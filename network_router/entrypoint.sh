@@ -54,7 +54,9 @@ nft add rule inet filter output ct state established,related accept
 nft add rule inet filter output meta skuid 0 udp dport 53 accept
 nft add rule inet filter output meta skuid 0 tcp dport 53 accept
 
+# 對 teacher (UID 1450) 和 student (UID 1451) 都套用網路規則
 nft add rule inet filter output meta skuid 1450 jump student_out
+nft add rule inet filter output meta skuid 1451 jump student_out
 
 if [ "$MODEL" == "white" ]; then
     echo "Configuring Whitelist..."

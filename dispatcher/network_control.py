@@ -194,7 +194,13 @@ class NetworkController:
 
         need_router = False
         if external_config:
-            if external_config.get("ip") or external_config.get("url"):
+            # 啟動 Router 的條件：
+            # 1. 有指定 IP 或 URL 規則
+            # 2. 有指定 model (White/Black) - 即使沒有規則也需要 Router 來執行預設行為
+            # 3. enabled 欄位明確設為 True
+            if (external_config.get("ip") or external_config.get("url")
+                    or external_config.get("model")
+                    or external_config.get("enabled")):
                 need_router = True
 
         has_sidecars = sidecars_config and len(sidecars_config) > 0

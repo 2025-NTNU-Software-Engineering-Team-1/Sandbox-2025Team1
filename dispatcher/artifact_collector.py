@@ -147,7 +147,7 @@ class ArtifactCollector:
             self._binary.pop(submission_id, None)
 
     # ---------- Upload ----------
-    def upload_all(self, submission_id: str):
+    def upload_all(self, submission_id: str, is_trial: bool = False):
         used = 0
         cases = self._case_artifacts.get(submission_id, {})
         binary = self._binary.get(submission_id)
@@ -160,14 +160,19 @@ class ArtifactCollector:
                         submission_id,
                     )
                     return
-                ok = self._upload_case(submission_id, task_no, case_no,
-                                       payload)
+                ok = self._upload_case(submission_id,
+                                       task_no,
+                                       case_no,
+                                       payload,
+                                       is_trial=is_trial)
                 if ok:
                     used += len(payload)
         # upload binary once
         if binary and not self._binary_uploaded.get(submission_id):
             if used + len(binary) <= _SUBMISSION_TOTAL_LIMIT:
-                if self._upload_binary(submission_id, binary):
+                if self._upload_binary(submission_id,
+                                       binary,
+                                       is_trial=is_trial):
                     used += len(binary)
                     self._binary_uploaded[submission_id] = True
 
@@ -240,9 +245,14 @@ class ArtifactCollector:
                                         {}).setdefault(task_no,
                                                        {})[case_no] = data
 
-    def _upload_case(self, submission_id: str, task_no: int, case_no: int,
-                     payload: bytes) -> bool:
-        url = f"{self.backend_url}/submission/{submission_id}/artifact/upload/case"
+    def _upload_case(self,
+                     submission_id: str,
+                     task_no: int,
+                     case_no: int,
+                     payload: bytes,
+                     is_trial: bool = False) -> bool:
+        base = "trial-submission" if is_trial else "submission"
+        url = f"{self.backend_url}/{base}/{submission_id}/artifact/upload/case"
         params = {"task": task_no, "case": case_no, "token": self.token}
         for attempt in range(3):
             try:
@@ -275,8 +285,12 @@ class ArtifactCollector:
             time.sleep(1)
         return False
 
-    def _upload_binary(self, submission_id: str, payload: bytes) -> bool:
-        url = f"{self.backend_url}/submission/{submission_id}/artifact/upload/binary"
+    def _upload_binary(self,
+                       submission_id: str,
+                       payload: bytes,
+                       is_trial: bool = False) -> bool:
+        base = "trial-submission" if is_trial else "submission"
+        url = f"{self.backend_url}/{base}/{submission_id}/artifact/upload/binary"
         params = {"token": self.token}
         for attempt in range(3):
             try:

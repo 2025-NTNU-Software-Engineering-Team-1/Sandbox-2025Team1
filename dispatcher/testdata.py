@@ -9,6 +9,7 @@ import requests as rq
 
 from .constant import BuildStrategy, ExecutionMode, Language, SubmissionMode
 from .meta import Meta
+from .file_manager import _safe_extract_zip
 from .utils import (
     get_redis_client,
     logger,
@@ -165,7 +166,7 @@ def ensure_testdata(problem_id: int):
         if problem_root.exists():
             shutil.rmtree(problem_root)
         with ZipFile(io.BytesIO(testdata)) as zf:
-            zf.extractall(problem_root)
+            _safe_extract_zip(zf, problem_root)
         meta = fetch_problem_meta(problem_id)
         checksum = calc_checksum(testdata + meta.encode())
         client.setex(key, 600, checksum)
@@ -245,7 +246,7 @@ def ensure_public_testdata(problem_id: int):
             shutil.rmtree(public_root)
         public_root.mkdir(parents=True, exist_ok=True)
         with ZipFile(io.BytesIO(testdata)) as zf:
-            zf.extractall(public_root)
+            _safe_extract_zip(zf, public_root)
         checksum = calc_checksum(testdata)
         client.setex(key, 600, checksum)
 
@@ -414,7 +415,7 @@ def ensure_ac_code(problem_id: int) -> tuple:
         ac_code_root.mkdir(parents=True, exist_ok=True)
 
         with ZipFile(io.BytesIO(ac_code_content)) as zf:
-            zf.extractall(ac_code_root)
+            _safe_extract_zip(zf, ac_code_root)
 
         # Cache language info
         if language is not None:

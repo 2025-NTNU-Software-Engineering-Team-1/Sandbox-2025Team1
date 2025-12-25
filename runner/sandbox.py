@@ -79,17 +79,23 @@ class Sandbox:
                 ),
             ))
 
-        # Bind mounts set
+        # Bind mounts set - 只在 stdin_path 存在時加入
         volume = {
             self.src_dir: {
                 "bind": "/src",
                 "mode": "rw"
             },
-            self.stdin_path: {
-                "bind": "/testdata/in",
-                "mode": "ro"
+        }
+        binds = {
+            self.src_dir: {
+                "bind": "/src",
+                "mode": "rw"
             },
         }
+        if self.stdin_path:
+            volume[self.stdin_path] = {"bind": "/testdata/in", "mode": "ro"}
+            binds[self.stdin_path] = {"bind": "/testdata/in", "mode": "ro"}
+
         container_working_dir = "/src"
 
         # network settings
@@ -97,16 +103,7 @@ class Sandbox:
         net_mode_arg = None if is_net_disabled else self.network_mode
 
         host_config = self.client.create_host_config(
-            binds={
-                self.src_dir: {
-                    "bind": "/src",
-                    "mode": "rw"
-                },
-                self.stdin_path: {
-                    "bind": "/testdata/in",
-                    "mode": "ro"
-                },
-            },
+            binds=binds,
             network_mode=net_mode_arg,
         )
 

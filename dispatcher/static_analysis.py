@@ -72,6 +72,7 @@ def _collect_sources_from_makefile(source_dir: pathlib.Path,
                                    language: Language) -> list[pathlib.Path]:
     """
     Parse Makefile to find source files.
+    Includes path traversal protection to prevent reading files outside source_dir.
     """
     makefile = source_dir / "Makefile"
     if not makefile.exists():
@@ -83,8 +84,17 @@ def _collect_sources_from_makefile(source_dir: pathlib.Path,
     for match in re.finditer(pattern, text):
         candidates.add(match.group(0))
     sources = []
+    source_dir_resolved = source_dir.resolve()
     for cand in candidates:
         p = (source_dir / cand).resolve()
+        # 路徑穿越防護：確保解析後的路徑仍在 source_dir 內
+        try:
+            p.relative_to(source_dir_resolved)
+        except ValueError:
+            logger().warning(
+                f"Path traversal blocked in Makefile: {cand} resolved to {p}, "
+                f"which is outside {source_dir_resolved}")
+            continue
         if p.exists() and p.is_file() and p.suffix.lower() in allowed_ext:
             sources.append(p)
     return sources

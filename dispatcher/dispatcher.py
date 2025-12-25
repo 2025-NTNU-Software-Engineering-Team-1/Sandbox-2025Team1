@@ -1470,27 +1470,28 @@ class Dispatcher(threading.Thread):
             # clear
             if resp.ok:
                 # collect binary lazily (skip for trial submissions)
-                if not is_trial:
-                    try:
-                        if self.artifact_collector.should_collect_binary(meta):
-                            self.artifact_collector.collect_binary(
-                                submission_id=submission_id,
-                                src_dir=self._common_dir(submission_id),
-                            )
-                    except Exception as exc:
-                        logger().warning(
-                            "collect binary failed [id=%s]: %s",
-                            submission_id,
-                            exc,
+                # collect binary lazily
+                try:
+                    if self.artifact_collector.should_collect_binary(meta):
+                        self.artifact_collector.collect_binary(
+                            submission_id=submission_id,
+                            src_dir=self._common_dir(submission_id),
                         )
-                    try:
-                        self.artifact_collector.upload_all(submission_id)
-                    except Exception as exc:
-                        logger().warning(
-                            "upload artifacts failed [id=%s]: %s",
-                            submission_id,
-                            exc,
-                        )
+                except Exception as exc:
+                    logger().warning(
+                        "collect binary failed [id=%s]: %s",
+                        submission_id,
+                        exc,
+                    )
+                try:
+                    self.artifact_collector.upload_all(submission_id,
+                                                       is_trial=is_trial)
+                except Exception as exc:
+                    logger().warning(
+                        "upload artifacts failed [id=%s]: %s",
+                        submission_id,
+                        exc,
+                    )
                 file_manager.clean_data(submission_id)
 
                 # Cleanup trial-specific data

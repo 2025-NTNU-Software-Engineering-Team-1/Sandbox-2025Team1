@@ -47,10 +47,98 @@ def fetch_problem_rules(problem_id: int) -> dict:
         return {}
 
 
+def _translate_legacy_network_schema(raw_config: dict) -> dict:
+    """
+    將舊格式 (firewallExtranet/connectWithLocal) 轉換為新格式 (external/sidecars/custom_env)。
+    如果已經是新格式則直接返回。
+    
+    舊格式範例:
+    {
+        "enabled": true,
+        "firewallExtranet": {"mode": "whitelist", "rules": [{"type": "ip", "value": "1.2.3.4"}]},
+        "connectWithLocal": {"mode": "whitelist", "rules": [...]}
+    }
+    
+    新格式範例:
+    {
+        "external": {"model": "White", "ip": [], "url": []},
+        "sidecars": [...],
+        "custom_env": {"env_list": [...]}
+    }
+    """
+    if not raw_config:
+        return {}
+
+    # 檢測是否為新格式（包含 external/sidecars/custom_env 任一欄位）
+    new_format_keys = {"external", "sidecars", "custom_env"}
+    if new_format_keys & set(raw_config.keys()):
+        logger().debug(
+            "Network config is already in new format, no translation needed")
+        return raw_config
+
+    # 檢測是否為舊格式（包含 firewallExtranet/connectWithLocal）
+    legacy_keys = {"firewallExtranet", "connectWithLocal"}
+    if not (legacy_keys & set(raw_config.keys())):
+        # 既不是新格式也不是舊格式，可能只有 enabled 等欄位
+        logger().debug(
+            "Network config has no recognizable format, returning as-is")
+        return raw_config
+
+    logger().info("Translating legacy network config format to new format")
+    result = {}
+
+    # firewallExtranet -> external
+    if "firewallExtranet" in raw_config:
+        fw = raw_config["firewallExtranet"]
+        mode = fw.get("mode", "blacklist")
+        rules = fw.get("rules", [])
+
+        # 轉換 model: whitelist -> White, blacklist -> Black
+        model = "White" if mode == "whitelist" else "Black"
+
+        # 分離 IP 和 URL 規則
+        ip_list = []
+        url_list = []
+        for rule in rules:
+            rule_type = rule.get("type", "")
+            value = rule.get("value", "")
+            if rule_type == "ip" and value:
+                ip_list.append(value)
+            elif rule_type == "url" and value:
+                url_list.append(value)
+
+        result["external"] = {
+            "model": model,
+            "ip": ip_list,
+            "url": url_list,
+        }
+        logger().debug(
+            f"Translated firewallExtranet to external: {result['external']}")
+
+    # connectWithLocal -> 目前沒有直接對應，記錄警告
+    if "connectWithLocal" in raw_config:
+        cwl = raw_config["connectWithLocal"]
+        logger().warning(
+            f"connectWithLocal found in legacy config but no direct mapping exists: {cwl}. "
+            "This may need manual configuration as sidecars or custom_env.")
+        # 可選：將 connectWithLocal 的本地 IP 規則加入 external 的白名單
+        # 這裡先不做自動轉換，因為語意不完全相同
+
+    # 保留 enabled 欄位供後續使用
+    if "enabled" in raw_config:
+        result["enabled"] = raw_config["enabled"]
+
+    return result
+
+
 def fetch_problem_network_config(problem_id: int) -> dict:
     """
     Fetch network configuration (sidecars & external) from local meta file
     Saved by testdata.py
+    
+    支援新舊兩種格式，自動偵測並轉換：
+    - 新格式: external/sidecars/custom_env
+    - 舊格式: firewallExtranet/connectWithLocal (自動轉換為新格式)
     """
     meta_path = TESTDATA_ROOT / "meta" / f"{problem_id}.json"
     logger().debug(
@@ -79,6 +167,9 @@ def fetch_problem_network_config(problem_id: int) -> dict:
 
         if network_config is None:
             network_config = {}
+
+        # 自動偵測並轉換舊格式
+        network_config = _translate_legacy_network_schema(network_config)
 
         asset_paths = data.get("assetPaths", {})
         if asset_paths.get("network_dockerfile"):
