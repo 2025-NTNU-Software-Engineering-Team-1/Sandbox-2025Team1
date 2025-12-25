@@ -1,3 +1,4 @@
+from pathlib import Path
 import pytest
 from unittest.mock import MagicMock, patch, call
 from dispatcher.network_control import NetworkController
@@ -285,3 +286,11 @@ def test_setup_topology_sidecar_only_sets_internal_network(
 
     assert network_controller.resources["sidecar-only"][
         "mode"] == "noj-net-sidecar-only"
+
+
+def test_router_entrypoint_applies_rules_to_teacher_and_student():
+    entrypoint = (Path(__file__).resolve().parents[1] / "network_router" /
+                  "entrypoint.sh")
+    content = entrypoint.read_text(encoding="utf-8")
+    assert "meta skuid 1450 jump student_out" in content
+    assert "meta skuid 1451 jump student_out" in content

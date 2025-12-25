@@ -211,3 +211,72 @@ def test_build_with_make_failure(monkeypatch, TestSubmissionRunner):
     res = runner.build_with_make()
     assert res["Status"] == "CE"
     assert res["DockerExitCode"] == 2
+
+
+def test_sandbox_run_skips_stdin_bind_when_missing(monkeypatch, tmp_path):
+    from runner.sandbox import Sandbox
+
+    class DummyDockerClient:
+
+        def __init__(self):
+            self.last_binds = None
+            self.last_volumes = None
+
+        def create_host_config(self, **kwargs):
+            self.last_binds = kwargs.get("binds")
+            return {"_host_config": kwargs}
+
+        def create_container(
+            self,
+            image,
+            command,
+            volumes,
+            network_disabled,
+            working_dir,
+            host_config,
+            environment=None,
+        ):
+            self.last_volumes = volumes
+            return {"Id": "dummy", "Warning": None}
+
+        def start(self, container):
+            return None
+
+        def wait(self, container, timeout=None):
+            return {"StatusCode": 0}
+
+        def remove_container(self, container, v=True, force=True):
+            return None
+
+    def _fake_get(self, container, path, filename):
+        if filename == "result":
+            return "Exited Normally\nWEXITSTATUS() = 0\n0\n0\n"
+        return ""
+
+    monkeypatch.chdir(pathlib.Path(__file__).resolve().parents[1])
+    client = DummyDockerClient()
+    monkeypatch.setattr("runner.sandbox.docker.APIClient",
+                        lambda base_url: client)
+    monkeypatch.setattr(Sandbox, "get", _fake_get)
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    runner = Sandbox(
+        time_limit=1000,
+        mem_limit=1024,
+        image="dummy",
+        src_dir=str(src_dir),
+        lang_id="0",
+        compile_need=False,
+        stdin_path=None,
+    )
+    runner.run()
+
+    assert client.last_binds is not None
+    assert client.last_volumes is not None
+    assert all(
+        mount.get("bind") != "/testdata/in"
+        for mount in client.last_binds.values())
+    assert all(
+        mount.get("bind") != "/testdata/in"
+        for mount in client.last_volumes.values())

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from dispatcher import file_manager
+import dispatcher.testdata as testdata
 from dispatcher.meta import Meta
 from dispatcher.constant import BuildStrategy, ExecutionMode, SubmissionMode
 
@@ -149,3 +150,50 @@ def test_extract_zip_rejects_symlink(tmp_path):
             source=buf,
             testdata=testdata_root,
         )
+
+
+class DummyLock:
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+class DummyRedis:
+
+    def __init__(self):
+        self.store = {}
+
+    def lock(self, key, timeout=60):
+        return DummyLock()
+
+    def get(self, key):
+        return None
+
+    def setex(self, key, ttl, value):
+        self.store[key] = value
+
+
+def _build_zip_bytes(entries: dict[str, str]) -> bytes:
+    buf = io.BytesIO()
+    with ZipFile(buf, "w") as zf:
+        for name, data in entries.items():
+            zf.writestr(name, data)
+    return buf.getvalue()
+
+
+def test_ensure_testdata_blocks_path_traversal(monkeypatch, tmp_path):
+    monkeypatch.setattr(testdata, "TESTDATA_ROOT", tmp_path)
+    monkeypatch.setattr(testdata, "get_redis_client", lambda: DummyRedis())
+    monkeypatch.setattr(testdata, "get_checksum", lambda problem_id: "abc")
+    monkeypatch.setattr(testdata, "fetch_problem_meta",
+                        lambda problem_id: "{}")
+
+    malicious_zip = _build_zip_bytes({"../evil.txt": "x"})
+    monkeypatch.setattr(testdata, "fetch_testdata",
+                        lambda problem_id: malicious_zip)
+
+    with pytest.raises(ValueError):
+        testdata.ensure_testdata(1)
