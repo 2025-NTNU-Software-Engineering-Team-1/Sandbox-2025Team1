@@ -24,17 +24,17 @@ int main () {
     struct sockaddr_in server;
     server.sin_family = AF_INET;
     server.sin_port = htons (port);
-    // 使用標準寫法
     server.sin_addr = *((struct in_addr *)he->h_addr_list [0]);
     printf ("debug: IP resolved to %s\n" , inet_ntoa (server.sin_addr));
 
+    printf ("debug: connecting...\n");
     if (connect (sock , (struct sockaddr *)&server , sizeof (server)) < 0) {
         printf ("fail (debug: connection failed)\n");
         close (sock);
         return 0;
     }
 
-    // 3. 根據 Port 分流
+    // 3. 邏輯分流
     if (port == 6379) {
         // --- Redis Logic ---
         printf ("debug: Mode = Redis\n");
@@ -46,24 +46,24 @@ int main () {
         int len = recv (sock , buffer , sizeof (buffer) - 1 , 0);
 
         if (len > 0) {
-            // 移除換行符號
+            // 移除換行以便 debug 顯示
             buffer [strcspn (buffer , "\r\n")] = 0;
             printf ("debug: Redis response [%s]\n" , buffer);
 
             if (strncmp (buffer , "+OK" , 3) == 0) {
-                printf ("good\n");
+                printf ("good (Redis Auth Success)\n");
             }
             else {
-                printf ("fail (debug: Redis AUTH failed)\n");
+                printf ("fail (Redis Auth Failed)\n");
             }
         }
         else {
-            printf ("fail (debug: Redis recv error)\n");
+            printf ("fail (Redis recv error)\n");
         }
     }
-    else if (port == 8080) {
-        // --- HTTP Logic ---
-        printf ("debug: Mode = HTTP\n");
+    else if (port == 8000 || port == 8080) {
+        // --- HTTP Logic (Unified) ---
+        printf ("debug: Mode = HTTP (Port %d)\n" , port);
         char msg [256];
         snprintf (msg , sizeof (msg) , "GET / HTTP/1.0\r\nHost: %s\r\n\r\n" , host);
         send (sock , msg , strlen (msg) , 0);
@@ -80,12 +80,44 @@ int main () {
         buffer [total_len] = '\0';
 
         printf ("debug: Total bytes: %d\n" , total_len);
+        // 簡單顯示前 50 個字元
+        char snippet [51];
+        strncpy (snippet , buffer , 50);
+        snippet [50] = '\0';
+        printf ("debug: Snippet: %s...\n" , snippet);
 
-        if (strstr (buffer , "verify_env_args_success")) {
+        int is_good = 0;
+
+        if (port == 8000) {
+            // env-python
+            if (strstr (buffer , "Hello from Server Container!")) {
+                printf ("debug: Matched Python env signature\n");
+                is_good = 1;
+            }
+            else {
+                printf ("fail (Python signature missing)\n");
+            }
+        }
+        else if (port == 8080) {
+            // env-cpp OR secret-server
+            if (strstr (buffer , "verify_env_args_success")) {
+                printf ("debug: Matched Secret Server signature\n");
+                is_good = 1;
+            }
+            else if (strstr (buffer , "Hello from C++ File!")) {
+                printf ("debug: Matched C++ env signature\n");
+                is_good = 1;
+            }
+            else {
+                printf ("fail (No known signature found)\n");
+            }
+        }
+
+        if (is_good) {
             printf ("good\n");
         }
         else {
-            printf ("fail (debug: secret keyword not found)\n");
+            printf ("fail\n");
         }
     }
     else {

@@ -4,6 +4,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <sys/time.h> // [修正 1] 加入這個標頭檔以定義 struct timeval
 
 typedef struct {
     char host [100];
@@ -21,7 +22,8 @@ void check (const char *host , int port) {
             printf ("fail\n");
             return;
         }
-        server.sin_addr = *((struct in_addr *)he->h_addr);
+        // [修正 2] 將 he->h_addr 改為標準的 he->h_addr_list[0]
+        server.sin_addr = *((struct in_addr *)he->h_addr_list [0]);
     }
 
     int sock = socket (AF_INET , SOCK_STREAM , 0);
