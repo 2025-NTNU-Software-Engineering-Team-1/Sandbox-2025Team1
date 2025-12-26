@@ -203,16 +203,20 @@ class NetworkController:
             )
             if ip_rules or url_rules:
                 need_router = True
-                logger().info(f"(*_*)[Router Decision] need_router=True (has rules)")
+                logger().info(
+                    f"(*_*)[Router Decision] need_router=True (has rules)")
             else:
-                logger().info(f"(*_*)[Router Decision] need_router=False (no rules)")
+                logger().info(
+                    f"(*_*)[Router Decision] need_router=False (no rules)")
         else:
-            logger().info(f"(*_*)[Router Decision] need_router=False (no external_config)")
+            logger().info(
+                f"(*_*)[Router Decision] need_router=False (no external_config)"
+            )
 
         has_sidecars = sidecars_config and len(sidecars_config) > 0
         has_custom = custom_image and len(custom_image) > 0
         need_internal = has_sidecars or has_custom
-        
+
         logger().info(
             f"(*_*)[Topology Decision] need_router={need_router}, "
             f"has_sidecars={has_sidecars}, has_custom={has_custom}, need_internal={need_internal}"
@@ -448,10 +452,14 @@ class NetworkController:
         )
         res = self.resources.get(submission_id)
         if not res:
-            logger().info(f"(*_*)[get_network_mode] No resources found for {submission_id}, returning 'none'")
+            logger().info(
+                f"(*_*)[get_network_mode] No resources found for {submission_id}, returning 'none'"
+            )
             return "none"
         mode = res.get("mode", "none")
-        logge().info(f"(*_*)[get_network_mode] Returning mode='{mode}' for {submission_id}")
+        logger().info(
+            f"(*_*)[get_network_mode] Returning mode='{mode}' for {submission_id}"
+        )
         return mode
 
     def get_custom_image(self, submission_id: str) -> Optional[str]:
