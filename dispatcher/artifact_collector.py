@@ -154,11 +154,11 @@ class ArtifactCollector:
                 self._binary[submission_id] = data
                 return
 
-    def upload_binary_only(self, submission_id: str):
+    def upload_binary_only(self, submission_id: str, is_trial: bool = False):
         payload = self._binary.get(submission_id)
         if not payload:
             return
-        if self._upload_binary(submission_id, payload):
+        if self._upload_binary(submission_id, payload, is_trial=is_trial):
             self._binary_uploaded[submission_id] = True
             self._binary.pop(submission_id, None)
 

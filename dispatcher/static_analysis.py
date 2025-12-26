@@ -42,6 +42,113 @@ def detect_include_args():
     return args
 
 
+# -----------------------------------------------------------------------------
+# C/C++ CursorKind to syntax name mapping (66 types)
+# Must match Backend's syntax_options.py CPP_CURSOR_KIND_NAME_MAP
+# -----------------------------------------------------------------------------
+CPP_CURSOR_KIND_MAP = {}  # Populated after clang import check
+
+
+def _init_cpp_cursor_kind_map():
+    """Initialize CursorKind mapping after clang is confirmed available."""
+    global CPP_CURSOR_KIND_MAP
+    if clang is None:
+        return
+
+    CK = clang.cindex.CursorKind
+    CPP_CURSOR_KIND_MAP = {
+        # Control Flow (13 types)
+        CK.FOR_STMT: "for",
+        CK.CXX_FOR_RANGE_STMT: "range_for",
+        CK.WHILE_STMT: "while",
+        CK.DO_STMT: "do_while",
+        CK.IF_STMT: "if",
+        CK.SWITCH_STMT: "switch",
+        CK.CASE_STMT: "case",
+        CK.DEFAULT_STMT: "default",
+        CK.BREAK_STMT: "break",
+        CK.CONTINUE_STMT: "continue",
+        CK.RETURN_STMT: "return",
+        CK.GOTO_STMT: "goto",
+        CK.LABEL_STMT: "label",
+
+        # Declarations (15 types)
+        CK.VAR_DECL: "var_decl",
+        CK.PARM_DECL: "param_decl",
+        CK.FUNCTION_DECL: "function_decl",
+        CK.FIELD_DECL: "field_decl",
+        CK.ENUM_DECL: "enum_decl",
+        CK.ENUM_CONSTANT_DECL: "enum_constant",
+        CK.STRUCT_DECL: "struct_decl",
+        CK.UNION_DECL: "union_decl",
+        CK.CLASS_DECL: "class_decl",
+        CK.TYPEDEF_DECL: "typedef",
+        CK.NAMESPACE: "namespace",
+        CK.USING_DECLARATION: "using",
+        CK.USING_DIRECTIVE: "using_directive",
+        CK.TYPE_ALIAS_DECL: "type_alias",
+        CK.STATIC_ASSERT: "static_assert",
+
+        # Expressions (7 types)
+        CK.CALL_EXPR: "call",
+        CK.BINARY_OPERATOR: "binary_op",
+        CK.UNARY_OPERATOR: "unary_op",
+        CK.COMPOUND_ASSIGNMENT_OPERATOR: "compound_assign",
+        CK.CONDITIONAL_OPERATOR: "ternary",
+        CK.ARRAY_SUBSCRIPT_EXPR: "array_subscript",
+        CK.MEMBER_REF_EXPR: "member_access",
+
+        # Literals (6 types)
+        CK.INTEGER_LITERAL: "integer_literal",
+        CK.FLOATING_LITERAL: "float_literal",
+        CK.STRING_LITERAL: "string_literal",
+        CK.CHARACTER_LITERAL: "char_literal",
+        CK.CXX_BOOL_LITERAL_EXPR: "bool_literal",
+        CK.CXX_NULL_PTR_LITERAL_EXPR: "nullptr",
+
+        # Casts (6 types)
+        CK.CSTYLE_CAST_EXPR: "c_cast",
+        CK.CXX_STATIC_CAST_EXPR: "static_cast",
+        CK.CXX_DYNAMIC_CAST_EXPR: "dynamic_cast",
+        CK.CXX_CONST_CAST_EXPR: "const_cast",
+        CK.CXX_REINTERPRET_CAST_EXPR: "reinterpret_cast",
+        CK.CXX_FUNCTIONAL_CAST_EXPR: "functional_cast",
+
+        # Memory Management (2 types)
+        CK.CXX_NEW_EXPR: "new",
+        CK.CXX_DELETE_EXPR: "delete",
+
+        # Classes/OOP (8 types)
+        CK.CONSTRUCTOR: "constructor",
+        CK.DESTRUCTOR: "destructor",
+        CK.CXX_METHOD: "method",
+        CK.CONVERSION_FUNCTION: "conversion_func",
+        CK.CXX_THIS_EXPR: "this",
+        CK.CXX_BASE_SPECIFIER: "base_specifier",
+        CK.CXX_ACCESS_SPEC_DECL: "access_specifier",
+        CK.FRIEND_DECL: "friend",
+
+        # Exceptions (3 types)
+        CK.CXX_TRY_STMT: "try",
+        CK.CXX_CATCH_STMT: "catch",
+        CK.CXX_THROW_EXPR: "throw",
+
+        # Templates (5 types)
+        CK.CLASS_TEMPLATE: "class_template",
+        CK.FUNCTION_TEMPLATE: "function_template",
+        CK.TEMPLATE_TYPE_PARAMETER: "template_type_param",
+        CK.TEMPLATE_NON_TYPE_PARAMETER: "template_nontype_param",
+        CK.TEMPLATE_TEMPLATE_PARAMETER: "template_template_param",
+
+        # Lambda (1 type)
+        CK.LAMBDA_EXPR: "lambda",
+    }
+
+
+# Initialize the map at module load time
+_init_cpp_cursor_kind_map()
+
+
 def _allowed_ext_for_language(language: Language) -> set[str]:
     if language == Language.C:
         return {".c", ".h"}
@@ -109,10 +216,22 @@ def _merge_facts(target: dict, source: dict):
             target[k].extend(v)
 
 
+def _build_sa_report_text(analysis_result) -> str:
+    report = analysis_result.message.strip()
+    if analysis_result.json_result:
+        report += (
+            "\n\n---------------------- Violations (JSON) ----------------------\n"
+        )
+        report += analysis_result.to_json_str()
+    return report
+
+
 def build_sa_payload(analysis_result, status: str) -> dict:
     """
     Build a structured payload for static analysis report.
     """
+
+    report_text = _build_sa_report_text(analysis_result)
 
     return {
         "status":
@@ -122,7 +241,7 @@ def build_sa_payload(analysis_result, status: str) -> dict:
         "violations": (json.dumps(analysis_result.json_result)
                        if analysis_result.json_result else ""),
         "report":
-        analysis_result.message.strip(),
+        report_text,
         # Retain raw result for backend if needed
         "json_result":
         analysis_result.json_result,
@@ -822,20 +941,22 @@ class CppAstVisitor:
                     self.call_graph[current_function_usr] = []
 
         if in_main:
+            # General syntax detection using CPP_CURSOR_KIND_MAP (66 types)
+            if node.kind in CPP_CURSOR_KIND_MAP:
+                syntax_name = CPP_CURSOR_KIND_MAP[node.kind]
+                self.facts["syntax"].append({
+                    "name": syntax_name,
+                    "line": node.location.line
+                })
+                # Backward compatibility: range_for also counts as "for"
+                if syntax_name == "range_for":
+                    self.facts["syntax"].append({
+                        "name": "for",
+                        "line": node.location.line
+                    })
+
+            # Handle function calls for call graph (recursion detection)
             if node.kind in (
-                    clang.cindex.CursorKind.FOR_STMT,
-                    clang.cindex.CursorKind.CXX_FOR_RANGE_STMT,
-            ):
-                self.facts["syntax"].append({
-                    "name": "for",
-                    "line": node.location.line
-                })
-            elif node.kind == clang.cindex.CursorKind.WHILE_STMT:
-                self.facts["syntax"].append({
-                    "name": "while",
-                    "line": node.location.line
-                })
-            elif node.kind in (
                     clang.cindex.CursorKind.CALL_EXPR,
                     clang.cindex.CursorKind.MEMBER_REF_EXPR,
             ):

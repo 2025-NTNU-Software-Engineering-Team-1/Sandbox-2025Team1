@@ -963,7 +963,9 @@ class Dispatcher(threading.Thread):
                         src_dir=self._common_dir(submission_id),
                     )
                     self.artifact_collector.upload_binary_only(
-                        submission_id=submission_id)
+                        submission_id=submission_id,
+                        is_trial=submission_id in self.trial_submissions,
+                    )
                 except Exception as exc:
                     logger().warning(
                         "collect/upload binary after compile failed [id=%s]: %s",
@@ -1032,7 +1034,9 @@ class Dispatcher(threading.Thread):
                         src_dir=self._common_dir(submission_id),
                     )
                     self.artifact_collector.upload_binary_only(
-                        submission_id=submission_id)
+                        submission_id=submission_id,
+                        is_trial=submission_id in self.trial_submissions,
+                    )
                 except Exception as exc:
                     logger().warning(
                         "collect/upload binary after build failed [id=%s]: %s",

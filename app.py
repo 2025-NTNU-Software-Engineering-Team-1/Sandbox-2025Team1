@@ -5,6 +5,7 @@ import secrets
 from flask import Flask, request, jsonify
 from dispatcher.constant import Language
 from dispatcher.dispatcher import Dispatcher
+from dispatcher.exception import DuplicatedSubmissionIdError
 from dispatcher.testdata import (
     ensure_testdata,
     get_problem_meta,
@@ -110,6 +111,14 @@ def submit(submission_id: str):
             from dispatcher.meta import Task
             meta.tasks = [Task(**t) for t in trial_tasks]
             logger.debug(f"Trial tasks generated: {len(meta.tasks)} tasks")
+        # Trial submissions always collect artifacts for staff review.
+        artifact_collection = list(
+            getattr(meta, "artifactCollection", []) or [])
+        if "zip" not in artifact_collection:
+            artifact_collection.append("zip")
+            meta.artifactCollection = artifact_collection
+            logger.debug(
+                "Trial submission forces artifactCollection to include 'zip'")
 
     try:
         DISPATCHER.prepare_submission_dir(
@@ -119,6 +128,16 @@ def submit(submission_id: str):
             source=request.files["src"],
             testdata=testdata_path,
         )
+    except FileExistsError:
+        return (
+            jsonify({
+                "status": "err",
+                "message":
+                "Submission is already judging. Please wait and retry.",
+                "data": None,
+            }),
+            409,
+        )
     except ValueError as e:
         return str(e), 400
 
@@ -126,13 +145,22 @@ def submit(submission_id: str):
         f"send submission {submission_id} to dispatcher (trial={is_trial})")
     try:
         DISPATCHER.handle(submission_id, problem_id, is_trial=is_trial)
+    except DuplicatedSubmissionIdError:
+        return (
+            jsonify({
+                "status": "err",
+                "message": "Duplicate submission id is already in progress.",
+                "data": None,
+            }),
+            409,
+        )
     except ValueError as e:
         return str(e), 400
     except queue.Full:
         return (
             jsonify({
                 "status": "err",
-                "msg": "task queue is full now.\n"
+                "message": "task queue is full now.\n"
                 "please wait a moment and re-send the submission.",
                 "data": None,
             }),

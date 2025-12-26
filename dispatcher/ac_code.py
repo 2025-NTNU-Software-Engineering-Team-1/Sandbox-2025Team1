@@ -116,11 +116,14 @@ def generate_ac_outputs(
 
             # Check for errors
             if result["status"] in ("TLE", "MLE", "RE", "OLE"):
+                error_msg = f"[AC Code Error] Status: {result['status']}"
+                if result.get('stderr'):
+                    error_msg += f"\nStderr: {result['stderr']}"
                 logger().error(
-                    f"AC code error for {in_file.name}: {result['status']} - {result['stderr']}"
+                    f"AC code error for {in_file.name}: {result['status']} - {result.get('stderr', '')}"
                 )
-                # Write empty file to avoid breaking flow
-                out_file.write_text("")
+                # Write error message to .out file for debugging
+                out_file.write_text(error_msg)
             else:
                 # Write stdout to output file
                 out_file.write_text(result["stdout"] or "")
@@ -130,8 +133,9 @@ def generate_ac_outputs(
         except ACCodeRunError as exc:
             logger().error(
                 f"Failed to generate output for {in_file.name}: {exc}")
-            # Create empty .out file to avoid breaking the flow
-            out_file.write_text("")
+            # Write error message to .out file instead of empty file
+            error_msg = f"[AC Code Exception] {str(exc)}"
+            out_file.write_text(error_msg)
             count += 1
 
     logger().info(f"Generated {count} .out files for problem {problem_id}")

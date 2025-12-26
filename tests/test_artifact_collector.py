@@ -82,3 +82,21 @@ def test_artifact_collector_skips_large_file(tmp_path, monkeypatch):
     assert "small.txt" in names
     assert "large.bin" not in names
     assert "stdout" in names
+
+
+def test_artifact_binary_upload_uses_trial_endpoint(monkeypatch):
+    calls = []
+
+    def fake_put(url, params=None, data=None, timeout=None, headers=None):
+        calls.append(url)
+        return DummyResp()
+
+    monkeypatch.setattr("dispatcher.artifact_collector.requests.put", fake_put)
+
+    collector = ArtifactCollector(logger=logging.getLogger(__name__))
+    collector._binary["trial-1"] = b"\x7fELF\x01"
+
+    collector.upload_binary_only("trial-1", is_trial=True)
+
+    assert calls
+    assert "/trial-submission/trial-1/artifact/upload/binary" in calls[0]
