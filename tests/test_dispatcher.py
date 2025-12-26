@@ -10,7 +10,8 @@ from pathlib import Path
 from dispatcher.dispatcher import Dispatcher
 from dispatcher.custom_checker import run_custom_checker_case
 from dispatcher.exception import *
-from dispatcher.constant import BuildStrategy, ExecutionMode, Language, SubmissionMode
+from dispatcher.constant import (AcceptedFormat, BuildStrategy, ExecutionMode,
+                                 Language)
 from dispatcher.build_strategy import (
     BuildPlan,
     BuildStrategyError,
@@ -115,7 +116,7 @@ def test_normal_submission_handle(docker_dispatcher: Dispatcher,
         tasks=[
             Task(taskScore=100, memoryLimit=128, timeLimit=1000, caseCount=1)
         ],
-        submissionMode=SubmissionMode.CODE,
+        acceptedFormat=AcceptedFormat.CODE,
         executionMode=ExecutionMode.GENERAL,
         buildStrategy=BuildStrategy.
         COMPILE,  # Python doesn't build, but consistent with flow
@@ -147,7 +148,7 @@ def test_handle_duplicated_submission(docker_dispatcher: Dispatcher, tmp_path,
         tasks=[
             Task(taskScore=100, memoryLimit=128, timeLimit=1000, caseCount=1)
         ],
-        submissionMode=SubmissionMode.CODE,
+        acceptedFormat=AcceptedFormat.CODE,
         executionMode=ExecutionMode.GENERAL,
         buildStrategy=BuildStrategy.COMPILE,
     )
@@ -185,7 +186,7 @@ def test_handle_triggers_background_pull(docker_dispatcher: Dispatcher,
         tasks=[
             Task(taskScore=100, memoryLimit=128, timeLimit=1000, caseCount=1)
         ],
-        submissionMode=SubmissionMode.CODE,
+        acceptedFormat=AcceptedFormat.CODE,
         executionMode=ExecutionMode.GENERAL,
         buildStrategy=BuildStrategy.COMPILE,
     )
@@ -212,7 +213,7 @@ def _zip_meta(language: Language, strategy: BuildStrategy) -> Meta:
         tasks=[
             Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)
         ],
-        submissionMode=SubmissionMode.ZIP,
+        acceptedFormat=AcceptedFormat.ZIP,
         executionMode=ExecutionMode.GENERAL,
         buildStrategy=strategy,
     )
@@ -258,7 +259,7 @@ def _function_only_meta(language: Language) -> Meta:
         tasks=[
             Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)
         ],
-        submissionMode=SubmissionMode.CODE,
+        acceptedFormat=AcceptedFormat.CODE,
         executionMode=ExecutionMode.FUNCTION_ONLY,
         buildStrategy=BuildStrategy.MAKE_FUNCTION_ONLY,
         assetPaths={
@@ -357,7 +358,7 @@ def test_build_failure_clears_submission(monkeypatch, tmp_path):
         tasks=[
             Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)
         ],
-        submissionMode=SubmissionMode.CODE,
+        acceptedFormat=AcceptedFormat.CODE,
         executionMode=ExecutionMode.GENERAL,
         buildStrategy=BuildStrategy.MAKE_NORMAL,
     )
@@ -493,7 +494,7 @@ def test_custom_checker_missing_asset_sets_error():
         tasks=[
             Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)
         ],
-        submissionMode=SubmissionMode.CODE,
+        acceptedFormat=AcceptedFormat.CODE,
         executionMode=ExecutionMode.GENERAL,
         buildStrategy=BuildStrategy.COMPILE,
         customChecker=True,
@@ -518,7 +519,7 @@ def test_prepare_custom_scorer_disabled_when_not_configured():
         tasks=[
             Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)
         ],
-        submissionMode=SubmissionMode.CODE,
+        acceptedFormat=AcceptedFormat.CODE,
         executionMode=ExecutionMode.GENERAL,
         buildStrategy=BuildStrategy.COMPILE,
         scoringScript=False,
@@ -548,7 +549,7 @@ def test_run_custom_scorer_payload(monkeypatch):
         tasks=[
             Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)
         ],
-        submissionMode=SubmissionMode.CODE,
+        acceptedFormat=AcceptedFormat.CODE,
         executionMode=ExecutionMode.GENERAL,
         buildStrategy=BuildStrategy.COMPILE,
         scoringScript=True,
@@ -606,7 +607,7 @@ def test_create_container_passes_network_mode_to_submission_runner(
         tasks=[
             Task(taskScore=100, memoryLimit=128, timeLimit=1000, caseCount=1)
         ],
-        submissionMode=SubmissionMode.CODE,
+        acceptedFormat=AcceptedFormat.CODE,
         executionMode=ExecutionMode.GENERAL,
         buildStrategy=BuildStrategy.COMPILE,
     )
@@ -668,7 +669,7 @@ def test_create_container_passes_network_mode_to_interactive_runner(
         tasks=[
             Task(taskScore=100, memoryLimit=128, timeLimit=1000, caseCount=1)
         ],
-        submissionMode=SubmissionMode.CODE,
+        acceptedFormat=AcceptedFormat.CODE,
         executionMode=ExecutionMode.INTERACTIVE,
         buildStrategy=BuildStrategy.COMPILE,
         assetPaths={"teacherLang": "c"},
@@ -816,7 +817,7 @@ def test_interactive_compile_error_short_circuits(monkeypatch):
         tasks=[
             Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)
         ],
-        submissionMode=SubmissionMode.CODE,
+        acceptedFormat=AcceptedFormat.CODE,
         executionMode=ExecutionMode.INTERACTIVE,
         buildStrategy=BuildStrategy.MAKE_INTERACTIVE,
         assetPaths={"teacherLang": "c"},

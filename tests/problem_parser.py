@@ -37,8 +37,11 @@ class ProblemParser:
             # parse source code
             prob_data['source'] = {}
             for src in os.listdir(src_dir):
-                with open(src_dir / src) as f:
-                    prob_data['source'][src] = f.read()
+                with open(src_dir / src, 'rb') as f:
+                    prob_data['source'][src] = f.read().decode(
+                        'utf-8',
+                        errors='replace',
+                    )
 
             # read testcase
             prob_data['testcase'] = []

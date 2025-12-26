@@ -5,19 +5,19 @@ import pytest
 from dispatcher.build_strategy import (BuildStrategyError,
                                        _ensure_single_executable,
                                        prepare_make_interactive)
-from dispatcher.constant import (BuildStrategy, ExecutionMode, Language,
-                                 SubmissionMode)
+from dispatcher.constant import (AcceptedFormat, BuildStrategy, ExecutionMode,
+                                 Language)
 from dispatcher.meta import Meta, Task
 
 
-def _meta(submission_mode: SubmissionMode, language: Language,
+def _meta(accepted_format: AcceptedFormat, language: Language,
           teacher_lang: str, teacher_file: str) -> Meta:
     return Meta(
         language=language,
         tasks=[
             Task(taskScore=100, memoryLimit=128, timeLimit=1000, caseCount=1)
         ],
-        submissionMode=submission_mode,
+        acceptedFormat=accepted_format,
         executionMode=ExecutionMode.INTERACTIVE,
         buildStrategy=BuildStrategy.MAKE_INTERACTIVE,
         assetPaths={
@@ -51,7 +51,7 @@ def _patch_teacher_assets(monkeypatch, tmp_path, teacher_file: str):
 def test_prepare_make_interactive_zip_python_requires_main(
         monkeypatch, tmp_path):
     _patch_teacher_assets(monkeypatch, tmp_path, "Teacher_file.py")
-    meta = _meta(SubmissionMode.ZIP, Language.PY, "py", "Teacher_file.py")
+    meta = _meta(AcceptedFormat.ZIP, Language.PY, "py", "Teacher_file.py")
     submission_dir = tmp_path / "sub"
     (submission_dir / "src" / "common").mkdir(parents=True)
 
@@ -64,7 +64,7 @@ def test_prepare_make_interactive_zip_python_requires_main(
 def test_prepare_make_interactive_zip_c_requires_makefile(
         monkeypatch, tmp_path):
     _patch_teacher_assets(monkeypatch, tmp_path, "Teacher_file.c")
-    meta = _meta(SubmissionMode.ZIP, Language.C, "c", "Teacher_file.c")
+    meta = _meta(AcceptedFormat.ZIP, Language.C, "c", "Teacher_file.c")
     submission_dir = tmp_path / "sub"
     src_dir = submission_dir / "src" / "common"
     src_dir.mkdir(parents=True)
@@ -78,7 +78,7 @@ def test_prepare_make_interactive_zip_c_requires_makefile(
 
 def test_prepare_make_interactive_code_skips_make(monkeypatch, tmp_path):
     _patch_teacher_assets(monkeypatch, tmp_path, "Teacher_file.c")
-    meta = _meta(SubmissionMode.CODE, Language.C, "c", "Teacher_file.c")
+    meta = _meta(AcceptedFormat.CODE, Language.C, "c", "Teacher_file.c")
     submission_dir = tmp_path / "sub"
     src_dir = submission_dir / "src" / "common"
     src_dir.mkdir(parents=True)

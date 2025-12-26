@@ -40,11 +40,18 @@ class DummyDockerClient:
         self.last_host_config = kwargs
         return {"_host_config": kwargs}
 
+    def create_endpoint_config(self):
+        return {"_endpoint_config": True}
+
+    def create_networking_config(self, config):
+        return {"_networking_config": config}
+
     def create_container(self,
                          image,
                          command,
                          working_dir,
                          host_config,
+                         networking_config=None,
                          environment=None):
         self.last_command = command
         return {"Id": "dummy"}

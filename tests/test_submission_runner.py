@@ -226,6 +226,12 @@ def test_sandbox_run_skips_stdin_bind_when_missing(monkeypatch, tmp_path):
             self.last_binds = kwargs.get("binds")
             return {"_host_config": kwargs}
 
+        def create_endpoint_config(self):
+            return {"_endpoint_config": True}
+
+        def create_networking_config(self, config):
+            return {"_networking_config": config}
+
         def create_container(
             self,
             image,
@@ -234,6 +240,7 @@ def test_sandbox_run_skips_stdin_bind_when_missing(monkeypatch, tmp_path):
             network_disabled,
             working_dir,
             host_config,
+            networking_config=None,
             environment=None,
         ):
             self.last_volumes = volumes
@@ -304,6 +311,12 @@ def test_sandbox_run_sets_allow_write_and_network(monkeypatch, tmp_path,
             self.host_config_kwargs = kwargs
             return {"_host_config": kwargs}
 
+        def create_endpoint_config(self):
+            return {"_endpoint_config": True}
+
+        def create_networking_config(self, config):
+            return {"_networking_config": config}
+
         def create_container(
             self,
             image,
@@ -312,6 +325,7 @@ def test_sandbox_run_sets_allow_write_and_network(monkeypatch, tmp_path,
             network_disabled,
             working_dir,
             host_config,
+            networking_config=None,
             environment=None,
         ):
             self.container_kwargs = {

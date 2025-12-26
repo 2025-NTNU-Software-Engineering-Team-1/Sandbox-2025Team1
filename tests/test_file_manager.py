@@ -7,11 +7,11 @@ import pytest
 from dispatcher import file_manager
 import dispatcher.testdata as testdata
 from dispatcher.meta import Meta
-from dispatcher.constant import BuildStrategy, ExecutionMode, SubmissionMode
+from dispatcher.constant import AcceptedFormat, BuildStrategy, ExecutionMode
 
 
 def _build_meta(
-    mode: SubmissionMode,
+    accepted_format: AcceptedFormat,
     execution_mode: ExecutionMode = ExecutionMode.GENERAL,
     build_strategy: BuildStrategy = BuildStrategy.COMPILE,
     language: int = 1,
@@ -19,8 +19,8 @@ def _build_meta(
     return Meta.parse_obj({
         "language":
         language,
-        "submissionMode":
-        int(mode),
+        "acceptedFormat":
+        accepted_format.value,
         "executionMode":
         int(execution_mode),
         "buildStrategy":
@@ -50,7 +50,7 @@ def _prepare_testdata(root: Path):
 
 
 def test_extract_zip_submission(tmp_path):
-    meta = _build_meta(SubmissionMode.ZIP,
+    meta = _build_meta(AcceptedFormat.ZIP,
                        build_strategy=BuildStrategy.MAKE_NORMAL)
     testdata_root = tmp_path / "testdata"
     _prepare_testdata(testdata_root)
@@ -71,7 +71,7 @@ def test_extract_zip_submission(tmp_path):
 
 
 def test_extract_zip_submission_requires_makefile(tmp_path):
-    meta = _build_meta(SubmissionMode.ZIP,
+    meta = _build_meta(AcceptedFormat.ZIP,
                        build_strategy=BuildStrategy.MAKE_NORMAL)
     testdata_root = tmp_path / "testdata"
     _prepare_testdata(testdata_root)
@@ -88,7 +88,7 @@ def test_extract_zip_submission_requires_makefile(tmp_path):
 
 def test_extract_zip_python_skips_makefile_requirement(tmp_path):
     meta = _build_meta(
-        SubmissionMode.ZIP,
+        AcceptedFormat.ZIP,
         build_strategy=BuildStrategy.MAKE_NORMAL,
         language=2,
     )
@@ -111,7 +111,7 @@ def test_extract_zip_python_skips_makefile_requirement(tmp_path):
 
 def test_function_only_rejects_zip_submission(tmp_path):
     meta = _build_meta(
-        SubmissionMode.ZIP,
+        AcceptedFormat.ZIP,
         execution_mode=ExecutionMode.FUNCTION_ONLY,
         build_strategy=BuildStrategy.MAKE_FUNCTION_ONLY,
     )
@@ -131,7 +131,7 @@ def test_function_only_rejects_zip_submission(tmp_path):
 
 
 def test_extract_zip_rejects_symlink(tmp_path):
-    meta = _build_meta(SubmissionMode.ZIP,
+    meta = _build_meta(AcceptedFormat.ZIP,
                        build_strategy=BuildStrategy.MAKE_NORMAL)
     testdata_root = tmp_path / "testdata"
     _prepare_testdata(testdata_root)
@@ -153,7 +153,7 @@ def test_extract_zip_rejects_symlink(tmp_path):
 
 
 def test_extract_code_rejects_non_main(tmp_path):
-    meta = _build_meta(SubmissionMode.CODE, language=2)
+    meta = _build_meta(AcceptedFormat.CODE, language=2)
     testdata_root = tmp_path / "testdata"
     _prepare_testdata(testdata_root)
     archive = _build_zip({"hello.py": "print('hi')"})
@@ -168,7 +168,7 @@ def test_extract_code_rejects_non_main(tmp_path):
 
 
 def test_extract_code_blocks_path_traversal(tmp_path):
-    meta = _build_meta(SubmissionMode.CODE, language=2)
+    meta = _build_meta(AcceptedFormat.CODE, language=2)
     testdata_root = tmp_path / "testdata"
     _prepare_testdata(testdata_root)
     archive = _build_zip({"../evil.py": "x"})

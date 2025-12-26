@@ -8,8 +8,9 @@ import docker
 import pytest
 
 from dispatcher.build_strategy import BuildStrategyError, _prepare_teacher_artifacts
-from dispatcher.constant import Language
-from dispatcher.meta import Meta, Task, SubmissionMode, ExecutionMode, BuildStrategy
+from dispatcher.constant import (AcceptedFormat, BuildStrategy, ExecutionMode,
+                                 Language)
+from dispatcher.meta import Meta, Task
 
 _BASE = Path(__file__).resolve().parents[1]
 os.environ["SUBMISSION_CONFIG"] = str(_BASE / ".config" / "submission.json")
@@ -508,7 +509,7 @@ def test_teacher_compile_fail_build_strategy(tmp_path):
     meta = Meta(
         language=Language.C,
         tasks=[Task(taskScore=100, memoryLimit=1, timeLimit=1, caseCount=1)],
-        submissionMode=SubmissionMode.CODE,
+        acceptedFormat=AcceptedFormat.CODE,
         executionMode=ExecutionMode.INTERACTIVE,
         buildStrategy=BuildStrategy.MAKE_INTERACTIVE,
         assetPaths={})
@@ -530,7 +531,7 @@ def test_prepare_teacher_file_respects_teacher_lang(tmp_path, monkeypatch):
     meta = Meta(
         language=Language.C,
         tasks=[Task(taskScore=100, memoryLimit=1, timeLimit=1, caseCount=1)],
-        submissionMode=SubmissionMode.CODE,
+        acceptedFormat=AcceptedFormat.CODE,
         executionMode=ExecutionMode.INTERACTIVE,
         buildStrategy=BuildStrategy.MAKE_INTERACTIVE,
         assetPaths={
@@ -556,7 +557,7 @@ def test_prepare_teacher_file_missing_teacher_lang(tmp_path, monkeypatch):
     meta = Meta(
         language=Language.C,
         tasks=[Task(taskScore=100, memoryLimit=1, timeLimit=1, caseCount=1)],
-        submissionMode=SubmissionMode.CODE,
+        acceptedFormat=AcceptedFormat.CODE,
         executionMode=ExecutionMode.INTERACTIVE,
         buildStrategy=BuildStrategy.MAKE_INTERACTIVE,
         assetPaths={"teacher_file": "ignored"})
