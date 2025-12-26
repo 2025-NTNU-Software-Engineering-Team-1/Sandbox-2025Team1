@@ -5,7 +5,7 @@ from zipfile import ZipFile
 from pathlib import Path
 from . import config
 from .utils import logger
-from .constant import ExecutionMode, Language, SubmissionMode
+from .constant import AcceptedFormat, ExecutionMode, Language
 from .meta import Meta
 
 
@@ -29,12 +29,11 @@ def extract(
     common_dir.mkdir()
     cases_dir = code_dir / "cases"
     cases_dir.mkdir()
-    submission_mode = SubmissionMode(meta.submissionMode)
-    if (getattr(meta, "executionMode",
-                ExecutionMode.GENERAL) == ExecutionMode.FUNCTION_ONLY
-            and submission_mode == SubmissionMode.ZIP):
+    is_zip_mode = meta.acceptedFormat == AcceptedFormat.ZIP
+    if (getattr(meta, "executionMode", ExecutionMode.GENERAL)
+            == ExecutionMode.FUNCTION_ONLY and is_zip_mode):
         raise ValueError("function-only submissions only accept code uploads")
-    if submission_mode == SubmissionMode.ZIP:
+    if is_zip_mode:
         _extract_zip_source(common_dir, source, int(meta.language))
     else:
         _extract_code_source(common_dir, source, int(meta.language))

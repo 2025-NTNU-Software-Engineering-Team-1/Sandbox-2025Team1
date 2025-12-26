@@ -1,5 +1,5 @@
-from .constant import BuildStrategy, ExecutionMode, Language, SubmissionMode
-from typing import Dict, List, Optional
+from .constant import AcceptedFormat, BuildStrategy, ExecutionMode, Language
+from typing import Dict, List, Literal, Optional
 from pydantic import (
     BaseModel,
     Field,
@@ -25,7 +25,7 @@ class Task(BaseModel):
 class Meta(BaseModel):
     language: Language
     tasks: conlist(Task, min_items=1)
-    submissionMode: SubmissionMode = SubmissionMode.CODE
+    acceptedFormat: AcceptedFormat = AcceptedFormat.CODE
     executionMode: ExecutionMode = ExecutionMode.GENERAL
     buildStrategy: BuildStrategy = BuildStrategy.COMPILE
     assetPaths: Dict[str, str] = Field(default_factory=dict)
@@ -42,6 +42,16 @@ class Meta(BaseModel):
     allowRead: bool = False
     allowWrite: bool = False
     aiChecker: Optional[dict] = None  # AI Checker config: {enabled, model}
+
+    @validator("acceptedFormat", pre=True)
+    def _coerce_accepted_format(cls, v):
+        if isinstance(v, str):
+            mapping = {
+                "code": AcceptedFormat.CODE,
+                "zip": AcceptedFormat.ZIP,
+            }
+            v = mapping.get(v, v)
+        return v
 
     @validator("executionMode", pre=True)
     def _coerce_execution_mode(cls, v):

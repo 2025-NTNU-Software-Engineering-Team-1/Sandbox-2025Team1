@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
-from .constant import Language, SubmissionMode
+from .constant import AcceptedFormat, Language
 from .meta import Meta
 from .asset_cache import ensure_custom_asset, AssetNotFoundError
 from runner.submission import SubmissionRunner
@@ -81,9 +81,9 @@ def prepare_make_interactive(
 
     src_dir = submission_dir / "src" / "common"
     language = Language(meta.language)
-    submission_mode = SubmissionMode(meta.submissionMode)
+    is_zip_mode = meta.acceptedFormat == AcceptedFormat.ZIP
 
-    if submission_mode == SubmissionMode.ZIP:
+    if is_zip_mode:
         if language == Language.PY:
             if not (src_dir / "main.py").exists():
                 raise BuildStrategyError(

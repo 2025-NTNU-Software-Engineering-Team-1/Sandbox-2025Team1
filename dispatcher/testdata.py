@@ -7,7 +7,7 @@ from pathlib import Path
 from zipfile import ZipFile
 import requests as rq
 
-from .constant import BuildStrategy, ExecutionMode, Language, SubmissionMode
+from .constant import AcceptedFormat, BuildStrategy, ExecutionMode, Language
 from .meta import Meta
 from .file_manager import _safe_extract_zip
 from .utils import (
@@ -74,7 +74,7 @@ def get_problem_meta(problem_id: int, language: Language) -> Meta:
         fetch_problem_meta(problem_id)
     obj = json.load(meta_path.open())
     obj["language"] = int(language)
-    obj.setdefault("submissionMode", int(SubmissionMode.CODE))
+    obj.setdefault("acceptedFormat", AcceptedFormat.CODE.value)
     exec_mode = obj.get("executionMode", ExecutionMode.GENERAL.value)
     if isinstance(exec_mode, str):
         mapping = {

@@ -13,7 +13,7 @@ from runner.interactive_runner import InteractiveRunner
 from . import job, file_manager, config
 from .exception import *
 from .meta import Meta
-from .constant import BuildStrategy, ExecutionMode, Language, SubmissionMode
+from .constant import AcceptedFormat, BuildStrategy, ExecutionMode, Language
 from .build_strategy import (
     BuildPlan,
     BuildStrategyError,
@@ -580,7 +580,6 @@ class Dispatcher(threading.Thread):
 
         # [Result Init]
 
-        submission_mode = SubmissionMode(submission_config.submissionMode)
         self.problem_ids[submission_id] = problem_id
 
         # Note: Static Analysis is now handled asynchronously in run() via job.StaticAnalysis
@@ -786,9 +785,7 @@ class Dispatcher(threading.Thread):
                     rules_json = fetch_problem_rules(_job.problem_id)
                     logger().debug(
                         f"fetched static analysis rules: {rules_json}")
-                    is_zip_mode = (SubmissionMode(
-                        submission_config.submissionMode) == SubmissionMode.ZIP
-                                   )
+                    is_zip_mode = submission_config.acceptedFormat == AcceptedFormat.ZIP
 
                     # do SA
                     success, payload, task_content = run_static_analysis(
@@ -1297,6 +1294,9 @@ class Dispatcher(threading.Thread):
                         copy_testcase=
                         False,  # custom checker reads from case_in_path
                     )
+                    # Get AI Checker config from meta for network access
+                    ai_checker_config = getattr(meta_obj, "aiChecker", None)
+                    problem_id = self.problem_ids.get(submission_id)
                     checker_result = run_custom_checker_case(
                         submission_id=submission_id,
                         case_no=case_no,
@@ -1310,6 +1310,8 @@ class Dispatcher(threading.Thread):
                         docker_url=runner.docker_url,
                         student_workdir=case_dir,
                         teacher_dir=teacher_case_dir,
+                        ai_checker_config=ai_checker_config,
+                        problem_id=problem_id,
                     )
                     res["Status"] = checker_result["status"]
                     message = checker_result.get("message", "")
