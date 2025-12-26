@@ -99,13 +99,42 @@ class Sandbox:
         container_working_dir = "/src"
 
         # network settings
+        # network_mode can be:
+        # - "none": disable network
+        # - "container:xxx": share network namespace with another container (router mode)
+        # - "noj-net-xxx": user-defined bridge network name (sidecar-only mode)
         is_net_disabled = self.network_mode == "none"
-        net_mode_arg = None if is_net_disabled else self.network_mode
-
-        host_config = self.client.create_host_config(
-            binds=binds,
-            network_mode=net_mode_arg,
-        )
+        is_container_mode = self.network_mode.startswith("container:")
+        is_network_name = not is_net_disabled and not is_container_mode and self.network_mode != "none"
+        
+        logging.info(f"[Sandbox] network_mode={self.network_mode}, is_net_disabled={is_net_disabled}, is_container_mode={is_container_mode}, is_network_name={is_network_name}")
+        
+        # Build host_config
+        if is_container_mode:
+            # Share network with router container
+            host_config = self.client.create_host_config(
+                binds=binds,
+                network_mode=self.network_mode,
+            )
+            networking_config = None
+        elif is_network_name:
+            # Connect to user-defined bridge network (for sidecar-only mode)
+            # Must use networking_config, NOT network_mode
+            host_config = self.client.create_host_config(
+                binds=binds,
+                network_mode=self.network_mode,  # network name as network_mode
+            )
+            # Create networking config with aliases for DNS resolution
+            networking_config = self.client.create_networking_config({
+                self.network_mode: self.client.create_endpoint_config()
+            })
+        else:
+            # No network or default
+            host_config = self.client.create_host_config(
+                binds=binds,
+                network_mode=None,
+            )
+            networking_config = None
 
         container = self.client.create_container(
             image=self.image,
@@ -114,6 +143,7 @@ class Sandbox:
             network_disabled=is_net_disabled,
             working_dir=container_working_dir,
             host_config=host_config,
+            networking_config=networking_config,
             environment={"SANDBOX_ALLOW_WRITE": "1"}
             if self.allow_write else None,
         )

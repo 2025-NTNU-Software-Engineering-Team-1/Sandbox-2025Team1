@@ -71,12 +71,42 @@ class InteractiveRunner:
                 "mode": "ro"
             },
         }
-        host_config = client.create_host_config(
-            binds=binds,
-            network_mode=self.network_mode,
-            mem_limit=f"{max(self.mem_limit,0)}k",
-            tmpfs={"/tmp": "rw,noexec,nosuid"},
-        )
+        
+        # network settings - same logic as sandbox.py
+        is_net_disabled = self.network_mode == "none"
+        is_container_mode = self.network_mode.startswith("container:")
+        is_network_name = not is_net_disabled and not is_container_mode and self.network_mode != "none"
+        
+        if is_container_mode:
+            # Share network with router container
+            host_config = client.create_host_config(
+                binds=binds,
+                network_mode=self.network_mode,
+                mem_limit=f"{max(self.mem_limit,0)}k",
+                tmpfs={"/tmp": "rw,noexec,nosuid"},
+            )
+            networking_config = None
+        elif is_network_name:
+            # Connect to user-defined bridge network (for sidecar-only mode)
+            host_config = client.create_host_config(
+                binds=binds,
+                network_mode=self.network_mode,
+                mem_limit=f"{max(self.mem_limit,0)}k",
+                tmpfs={"/tmp": "rw,noexec,nosuid"},
+            )
+            networking_config = client.create_networking_config({
+                self.network_mode: client.create_endpoint_config()
+            })
+        else:
+            # No network or default
+            host_config = client.create_host_config(
+                binds=binds,
+                network_mode=None if is_net_disabled else self.network_mode,
+                mem_limit=f"{max(self.mem_limit,0)}k",
+                tmpfs={"/tmp": "rw,noexec,nosuid"},
+            )
+            networking_config = None
+        
         # testcase.in is now in teacher_case_dir, mounted at /teacher
         case_path_container = "/teacher/testcase.in"
 
@@ -122,6 +152,7 @@ class InteractiveRunner:
             command=command,
             working_dir="/workspace",
             host_config=host_config,
+            networking_config=networking_config,
             environment=env or None,
         )
         try:
