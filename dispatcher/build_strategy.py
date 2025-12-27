@@ -226,10 +226,23 @@ def _finalize_function_only_artifacts(src_dir: Path, language: Language):
 
 def _ensure_single_executable(src_dir: Path, allowed: Iterable[str]):
     allowed = set(allowed)
-    exec_files = [
-        item for item in src_dir.iterdir()
-        if item.is_file() and os.access(item, os.X_OK)
-    ]
+    exec_files = []
+    for item in src_dir.iterdir():
+        if not item.is_file():
+            continue
+        if not os.access(item, os.X_OK):
+            continue
+        # Only count true binary executables (ELF format), not scripts or text files
+        # This handles macOS zip files that may preserve executable permissions on text files
+        try:
+            with open(item, 'rb') as f:
+                header = f.read(4)
+                # Check for ELF magic number (Linux executables)
+                if header[:4] == b'\x7fELF':
+                    exec_files.append(item)
+        except (IOError, OSError):
+            # If we can't read it, skip it
+            pass
     extras = [item for item in exec_files if item.name not in allowed]
     if extras:
         raise BuildStrategyError(
