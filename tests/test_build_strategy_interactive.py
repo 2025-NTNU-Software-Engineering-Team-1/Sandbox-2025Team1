@@ -95,9 +95,9 @@ def test_prepare_make_interactive_code_skips_make(monkeypatch, tmp_path):
 def test_ensure_single_executable_rejects_extra(tmp_path):
     src_dir = tmp_path / "src"
     src_dir.mkdir()
-    (src_dir / "a.out").write_bytes(b"bin")
+    (src_dir / "a.out").write_bytes(b"\x7fELFbin")
     extra = src_dir / "extra"
-    extra.write_bytes(b"bin")
+    extra.write_bytes(b"\x7fELFbin")
     (src_dir / "a.out").chmod(0o755)
     extra.chmod(0o755)
 

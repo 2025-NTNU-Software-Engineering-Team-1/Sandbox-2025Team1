@@ -235,10 +235,10 @@ def _ensure_single_executable(src_dir: Path, allowed: Iterable[str]):
         # Only count true binary executables (ELF format), not scripts or text files
         # This handles macOS zip files that may preserve executable permissions on text files
         try:
-            with open(item, 'rb') as f:
+            with open(item, "rb") as f:
                 header = f.read(4)
                 # Check for ELF magic number (Linux executables)
-                if header[:4] == b'\x7fELF':
+                if header[:4] == b"\x7fELF":
                     exec_files.append(item)
         except (IOError, OSError):
             # If we can't read it, skip it
