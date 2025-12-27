@@ -95,17 +95,21 @@ echo "All IPv6: $ALL_IPV6"
 # ============================================================
 echo "=== 2. Configuring DNS Sinkhole ==="
 
+# Get dnsmasq user UID for firewall rules
+DNSMASQ_UID=$(id -u dnsmasq 2>/dev/null || echo "100")
+echo "dnsmasq UID: $DNSMASQ_UID"
+
 # Base dnsmasq configuration
 cat > /etc/dnsmasq.conf << 'DNSMASQ_CONF'
-# Docker's embedded DNS for internal container name resolution
-# This MUST be first so internal names are resolved before external queries
-server=127.0.0.11
-
-# Upstream DNS servers for external queries
+# Upstream DNS servers for external queries (FIRST - most reliable)
 server=8.8.8.8
 server=8.8.4.4
 server=2001:4860:4860::8888
 server=2001:4860:4860::8844
+
+# Docker's embedded DNS for internal container name resolution (LAST - fallback)
+# Only used for resolving internal container names like "redis-sidecar"
+server=127.0.0.11
 
 # Don't use /etc/resolv.conf
 no-resolv
@@ -113,9 +117,11 @@ no-resolv
 # Don't read /etc/hosts
 no-hosts
 
-# Listen on all interfaces
-listen-address=0.0.0.0
-listen-address=::
+# Listen ONLY on loopback interfaces
+# This ensures responses use the correct source address (127.0.0.1)
+# All external queries are redirected to 127.0.0.1:53 via NAT
+listen-address=127.0.0.1
+listen-address=::1
 
 # Cache size
 cache-size=1000
@@ -127,11 +133,8 @@ log-facility=/var/log/dnsmasq.log
 # Load blocklist/allowlist
 conf-dir=/etc/dnsmasq.d/,*.conf
 
-# Bind only to specific interfaces
-bind-interfaces
-
-# Strict ordering: try servers in order, don't query all at once
-strict-order
+# DO NOT use strict-order - allows fallback to other DNS servers
+# strict-order
 DNSMASQ_CONF
 
 # Initialize blocklist and allowlist files
@@ -227,12 +230,15 @@ nft add rule inet nat prerouting udp dport 53 redirect to :53
 nft add rule inet nat prerouting tcp dport 53 redirect to :53
 
 # Output: handles locally-generated packets (student container DNS queries)
-# Exclude root (UID 0) to avoid redirect loop - dnsmasq runs as root and needs to query upstream
-nft add rule inet nat output meta skuid != 0 udp dport 53 redirect to :53
-nft add rule inet nat output meta skuid != 0 tcp dport 53 redirect to :53
+# Exclude root (UID 0) AND dnsmasq user to avoid redirect loop
+# dnsmasq needs to query upstream DNS servers directly
+nft add rule inet nat output meta skuid 0 accept
+nft add rule inet nat output meta skuid $DNSMASQ_UID accept
+nft add rule inet nat output udp dport 53 redirect to :53
+nft add rule inet nat output tcp dport 53 redirect to :53
 
-# Outbound NAT (masquerade)
-nft add rule inet nat postrouting oifname "eth0" masquerade
+# Outbound NAT (masquerade) - for all outgoing interfaces
+nft add rule inet nat postrouting masquerade
 
 # Output filter chain (default drop)
 nft add chain inet filter output { type filter hook output priority 0 \; policy drop \; }
@@ -244,9 +250,11 @@ nft add rule inet filter output oifname "lo" accept
 # Allow established/related connections
 nft add rule inet filter output ct state established,related accept
 
-# Root can access external DNS (for dnsmasq upstream queries)
-nft add rule inet filter output meta skuid 0 udp dport 53 accept
-nft add rule inet filter output meta skuid 0 tcp dport 53 accept
+# Root can access anything (for system operations)
+nft add rule inet filter output meta skuid 0 accept
+
+# dnsmasq user can access anything (for upstream DNS queries)
+nft add rule inet filter output meta skuid $DNSMASQ_UID accept
 
 # Teacher (UID 1450) and Student (UID 1451) jump to student_out chain
 nft add rule inet filter output meta skuid 1450 jump student_out
