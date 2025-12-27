@@ -10,6 +10,7 @@ __pycache__
 
 submissions/
 submissions.bk/
+.DS_Store
 
 sandbox-testdata/
 
