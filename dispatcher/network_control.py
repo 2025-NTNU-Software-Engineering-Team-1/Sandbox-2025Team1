@@ -393,9 +393,8 @@ class NetworkController:
                 # Only wait for router now (internal containers already waited above)
                 containers_to_wait.append(router_id)
                 resource_record["mode"] = f"container:{router_id}"
-                # Wait for router entrypoint to complete firewall setup
-                time.sleep(20)
 
+            # Case 2: Router Only
             elif need_router:
                 logger().debug(
                     f"(*_*)[In _setup_topology] Setting up router-only topology for submission {submission_id}"
@@ -404,8 +403,6 @@ class NetworkController:
                 resource_record["router_id"] = router_id
                 resource_record["mode"] = f"container:{router_id}"
                 containers_to_wait.append(router_id)
-                # Wait for router entrypoint to complete firewall setup
-                time.sleep(20)
 
             # Case 3: Sidecar Only (no router needed)
             elif need_internal:
@@ -619,14 +616,7 @@ class NetworkController:
         self.client.put_archive(container=container.get("Id"),
                                 path="/",
                                 data=tar_stream)
-        logger().debug(
-            f"(*_*)[In _start_router] Config injected to router-{submission_id}, config: {config_data}"
-        )
-        
         self.client.start(container.get("Id"))
-        logger().info(
-            f"(*_*)[In _start_router] Router started: {container.get('Id')[:12]}"
-        )
 
         return container.get("Id")
 

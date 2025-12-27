@@ -247,6 +247,9 @@ nft add chain inet filter student_out
 # Allow loopback
 nft add rule inet filter output oifname "lo" accept
 
+# Allow established/related connections
+nft add rule inet filter output ct state established,related accept
+
 # Root can access anything (for system operations)
 nft add rule inet filter output meta skuid 0 accept
 
@@ -254,25 +257,14 @@ nft add rule inet filter output meta skuid 0 accept
 nft add rule inet filter output meta skuid $DNSMASQ_UID accept
 
 # Teacher (UID 1450) and Student (UID 1451) jump to student_out chain
-# IMPORTANT: These rules must come BEFORE ct state established,related
-# Otherwise established connections bypass the whitelist check!
 nft add rule inet filter output meta skuid 1450 jump student_out
 nft add rule inet filter output meta skuid 1451 jump student_out
-
-# Allow established/related connections (for other users, after student check)
-nft add rule inet filter output ct state established,related accept
 
 # ============================================================
 # 5. Configure student_out chain based on mode
 # ============================================================
 if [ "$MODEL" == "white" ]; then
     echo "Configuring Whitelist firewall rules..."
-    echo "  Strategy: DNS sinkhole for URL control, firewall for explicit IPs only"
-    echo "  Note: All port 53 traffic is NAT redirected to dnsmasq (sinkhole)"
-
-    # ============================================================
-    # 5b. Configure student_out chain (filter table)
-    # ============================================================
 
     # Allow Sidecar IPs (IPv4 and IPv6)
     for sip in $SIDECAR_IPS; do
@@ -290,30 +282,21 @@ if [ "$MODEL" == "white" ]; then
     nft add rule inet filter student_out ip6 daddr ::1 udp dport 53 accept
     nft add rule inet filter student_out ip6 daddr ::1 tcp dport 53 accept
 
-    # Allow explicitly whitelisted IPs (from $IPS only, not resolved URLs)
-    # We rely on DNS sinkhole for URL-based control, not IP resolution
-    for ip in $IPS; do
+    # Allow whitelisted IPv4 addresses
+    for ip in $ALL_IPV4; do
         if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Allow explicit IP: $ip"
+            echo "Allow IPv4: $ip"
             nft add rule inet filter student_out ip daddr "$ip" accept
-        elif [[ "$ip" =~ : ]]; then
-            echo "Allow explicit IPv6: $ip"
-            nft add rule inet filter student_out ip6 daddr "$ip" accept
         fi
     done
 
-    # If URL rules exist, allow HTTP/HTTPS ports for whitelisted domains
-    # DNS sinkhole will return 0.0.0.0 for non-whitelisted domains
-    if [ -n "$URLS" ]; then
-        echo "URL whitelist detected: Allowing HTTP/HTTPS ports"
-        echo "  (DNS sinkhole will block non-whitelisted domains)"
-        
-        # Allow common web ports
-        nft add rule inet filter student_out tcp dport 80 accept    # HTTP
-        nft add rule inet filter student_out tcp dport 443 accept   # HTTPS
-        nft add rule inet filter student_out tcp dport 8080 accept  # Alt HTTP
-        nft add rule inet filter student_out tcp dport 8443 accept  # Alt HTTPS
-    fi
+    # Allow whitelisted IPv6 addresses
+    for ip in $ALL_IPV6; do
+        if [[ "$ip" =~ : ]]; then
+            echo "Allow IPv6: $ip"
+            nft add rule inet filter student_out ip6 daddr "$ip" accept
+        fi
+    done
 
     # Reject everything else
     nft add rule inet filter student_out reject
