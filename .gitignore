@@ -9,6 +9,8 @@ __pycache__
 .vscode
 
 submissions/
+submissions.bk/
+.DS_Store
 
 sandbox-testdata/
 
@@ -16,7 +18,6 @@ sandbox-testdata/
 
 sandbox
 .pytest_cache/
-.config/submission.json
 TODO.md
 Spec.md
 note.md

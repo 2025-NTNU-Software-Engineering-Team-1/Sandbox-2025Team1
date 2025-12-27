@@ -1,16 +1,17 @@
 import io
-from zipfile import ZipFile
+from zipfile import ZipFile, ZipInfo
 from pathlib import Path
 
 import pytest
 
 from dispatcher import file_manager
+import dispatcher.testdata as testdata
 from dispatcher.meta import Meta
-from dispatcher.constant import BuildStrategy, ExecutionMode, SubmissionMode
+from dispatcher.constant import AcceptedFormat, BuildStrategy, ExecutionMode
 
 
 def _build_meta(
-    mode: SubmissionMode,
+    accepted_format: AcceptedFormat,
     execution_mode: ExecutionMode = ExecutionMode.GENERAL,
     build_strategy: BuildStrategy = BuildStrategy.COMPILE,
     language: int = 1,
@@ -18,8 +19,8 @@ def _build_meta(
     return Meta.parse_obj({
         "language":
         language,
-        "submissionMode":
-        int(mode),
+        "acceptedFormat":
+        accepted_format.value,
         "executionMode":
         int(execution_mode),
         "buildStrategy":
@@ -49,7 +50,7 @@ def _prepare_testdata(root: Path):
 
 
 def test_extract_zip_submission(tmp_path):
-    meta = _build_meta(SubmissionMode.ZIP,
+    meta = _build_meta(AcceptedFormat.ZIP,
                        build_strategy=BuildStrategy.MAKE_NORMAL)
     testdata_root = tmp_path / "testdata"
     _prepare_testdata(testdata_root)
@@ -65,12 +66,12 @@ def test_extract_zip_submission(tmp_path):
         testdata=testdata_root,
     )
     submission_dir = tmp_path / "zip-001"
-    assert (submission_dir / "src" / "Makefile").exists()
+    assert (submission_dir / "src" / "common" / "Makefile").exists()
     assert (submission_dir / "testcase" / "0000.in").exists()
 
 
 def test_extract_zip_submission_requires_makefile(tmp_path):
-    meta = _build_meta(SubmissionMode.ZIP,
+    meta = _build_meta(AcceptedFormat.ZIP,
                        build_strategy=BuildStrategy.MAKE_NORMAL)
     testdata_root = tmp_path / "testdata"
     _prepare_testdata(testdata_root)
@@ -87,7 +88,7 @@ def test_extract_zip_submission_requires_makefile(tmp_path):
 
 def test_extract_zip_python_skips_makefile_requirement(tmp_path):
     meta = _build_meta(
-        SubmissionMode.ZIP,
+        AcceptedFormat.ZIP,
         build_strategy=BuildStrategy.MAKE_NORMAL,
         language=2,
     )
@@ -105,13 +106,15 @@ def test_extract_zip_python_skips_makefile_requirement(tmp_path):
         testdata=testdata_root,
     )
     submission_dir = tmp_path / "zip-py"
-    assert (submission_dir / "src" / "main.py").exists()
+    assert (submission_dir / "src" / "common" / "main.py").exists()
 
 
 def test_function_only_rejects_zip_submission(tmp_path):
-    meta = _build_meta(SubmissionMode.ZIP,
-                       execution_mode=ExecutionMode.FUNCTION_ONLY,
-                       build_strategy=BuildStrategy.MAKE_FUNCTION_ONLY)
+    meta = _build_meta(
+        AcceptedFormat.ZIP,
+        execution_mode=ExecutionMode.FUNCTION_ONLY,
+        build_strategy=BuildStrategy.MAKE_FUNCTION_ONLY,
+    )
     testdata_root = tmp_path / "testdata"
     _prepare_testdata(testdata_root)
     archive = _build_zip({
@@ -125,3 +128,102 @@ def test_function_only_rejects_zip_submission(tmp_path):
             source=archive,
             testdata=testdata_root,
         )
+
+
+def test_extract_zip_rejects_symlink(tmp_path):
+    meta = _build_meta(AcceptedFormat.ZIP,
+                       build_strategy=BuildStrategy.MAKE_NORMAL)
+    testdata_root = tmp_path / "testdata"
+    _prepare_testdata(testdata_root)
+    buf = io.BytesIO()
+    with ZipFile(buf, "w") as zf:
+        info = ZipInfo("evil_link")
+        # mark as symlink: high nibble 0xA (see external_attr >> 28)
+        info.external_attr = (0xA000 << 16)
+        zf.writestr(info, b"ignored")
+    buf.seek(0)
+    with pytest.raises(ValueError):
+        file_manager.extract(
+            root_dir=tmp_path,
+            submission_id="zip-symlink",
+            meta=meta,
+            source=buf,
+            testdata=testdata_root,
+        )
+
+
+def test_extract_code_rejects_non_main(tmp_path):
+    meta = _build_meta(AcceptedFormat.CODE, language=2)
+    testdata_root = tmp_path / "testdata"
+    _prepare_testdata(testdata_root)
+    archive = _build_zip({"hello.py": "print('hi')"})
+    with pytest.raises(ValueError):
+        file_manager.extract(
+            root_dir=tmp_path,
+            submission_id="code-bad-name",
+            meta=meta,
+            source=archive,
+            testdata=testdata_root,
+        )
+
+
+def test_extract_code_blocks_path_traversal(tmp_path):
+    meta = _build_meta(AcceptedFormat.CODE, language=2)
+    testdata_root = tmp_path / "testdata"
+    _prepare_testdata(testdata_root)
+    archive = _build_zip({"../evil.py": "x"})
+    with pytest.raises(ValueError):
+        file_manager.extract(
+            root_dir=tmp_path,
+            submission_id="code-traversal",
+            meta=meta,
+            source=archive,
+            testdata=testdata_root,
+        )
+
+
+class DummyLock:
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+class DummyRedis:
+
+    def __init__(self):
+        self.store = {}
+
+    def lock(self, key, timeout=60):
+        return DummyLock()
+
+    def get(self, key):
+        return None
+
+    def setex(self, key, ttl, value):
+        self.store[key] = value
+
+
+def _build_zip_bytes(entries: dict[str, str]) -> bytes:
+    buf = io.BytesIO()
+    with ZipFile(buf, "w") as zf:
+        for name, data in entries.items():
+            zf.writestr(name, data)
+    return buf.getvalue()
+
+
+def test_ensure_testdata_blocks_path_traversal(monkeypatch, tmp_path):
+    monkeypatch.setattr(testdata, "TESTDATA_ROOT", tmp_path)
+    monkeypatch.setattr(testdata, "get_redis_client", lambda: DummyRedis())
+    monkeypatch.setattr(testdata, "get_checksum", lambda problem_id: "abc")
+    monkeypatch.setattr(testdata, "fetch_problem_meta",
+                        lambda problem_id: "{}")
+
+    malicious_zip = _build_zip_bytes({"../evil.txt": "x"})
+    monkeypatch.setattr(testdata, "fetch_testdata",
+                        lambda problem_id: malicious_zip)
+
+    with pytest.raises(ValueError):
+        testdata.ensure_testdata(1)

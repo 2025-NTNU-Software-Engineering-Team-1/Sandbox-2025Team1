@@ -2,13 +2,15 @@ import io
 import os
 import shutil
 import zipfile
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
-from .constant import Language
+from .constant import AcceptedFormat, Language
 from .meta import Meta
-from .testdata import fetch_problem_asset
+from .asset_cache import ensure_custom_asset, AssetNotFoundError
+from runner.submission import SubmissionRunner
 
 
 class BuildStrategyError(ValueError):
@@ -29,24 +31,75 @@ class BuildPlan:
     finalize: Optional[Callable[[], None]] = None
 
 
+def prepare_interactive_teacher_artifacts(
+    problem_id: int,
+    meta: Meta,
+    submission_dir: Path,
+) -> None:
+    """
+    Unified teacher artifact preparation for interactive mode.
+    1. Fetch teacher source
+    2. Extract to submission_dir/teacher
+    3. Compile if needed
+    """
+    try:
+        _prepare_teacher_artifacts(
+            problem_id=problem_id,
+            meta=meta,
+            submission_dir=submission_dir,
+        )
+    except Exception as exc:
+        raise BuildStrategyError(
+            f"failed to prepare teacher artifacts: {exc}") from exc
+
+
 def prepare_make_normal(
     meta: Meta,
     submission_dir: Path,
 ) -> BuildPlan:
     return _build_plan_for_student_artifacts(
         language=meta.language,
-        src_dir=submission_dir / "src",
+        src_dir=submission_dir / "src" / "common",
     )
 
 
 def prepare_make_interactive(
+    problem_id: int,
     meta: Meta,
     submission_dir: Path,
 ) -> BuildPlan:
-    return _build_plan_for_student_artifacts(
-        language=meta.language,
-        src_dir=submission_dir / "src",
+    """
+    Interactive handler: prepares teacher, then validates student code/zip.
+    - ZIP: python requires main.py; C/C++ requires Makefile (strict CE)
+    - CODE: direct compile (needs_make=False)
+    """
+    prepare_interactive_teacher_artifacts(
+        problem_id=problem_id,
+        meta=meta,
+        submission_dir=submission_dir,
     )
+
+    src_dir = submission_dir / "src" / "common"
+    language = Language(meta.language)
+    is_zip_mode = meta.acceptedFormat == AcceptedFormat.ZIP
+
+    if is_zip_mode:
+        if language == Language.PY:
+            if not (src_dir / "main.py").exists():
+                raise BuildStrategyError(
+                    "interactive zip requires main.py for python submissions")
+            return BuildPlan(needs_make=False)
+        # C/C++ strict Makefile requirement
+        if not (src_dir / "Makefile").exists():
+            raise BuildStrategyError(
+                "interactive zip requires Makefile for C/C++ submissions")
+        return _build_plan_for_student_artifacts(
+            language=language,
+            src_dir=src_dir,
+        )
+
+    # CODE upload: compile directly, no make
+    return BuildPlan(needs_make=False)
 
 
 def prepare_function_only_submission(
@@ -54,7 +107,7 @@ def prepare_function_only_submission(
     meta: Meta,
     submission_dir: Path,
 ) -> BuildPlan:
-    src_dir = submission_dir / "src"
+    src_dir = submission_dir / "src" / "common"
     student_path = _student_entry_path(src_dir=src_dir, language=meta.language)
     if not student_path.exists():
         raise BuildStrategyError("student source not found")
@@ -62,9 +115,17 @@ def prepare_function_only_submission(
     make_asset = meta.assetPaths.get("makefile")
     if not make_asset:
         raise BuildStrategyError("functionOnly mode requires makefile asset")
-    archive = fetch_problem_asset(problem_id, "makefile")
+    makefile_asset = Path(make_asset).name if make_asset else "makefile.zip"
+    try:
+        archive_path = ensure_custom_asset(problem_id,
+                                           "makefile",
+                                           filename=makefile_asset)
+    except AssetNotFoundError as exc:
+        raise BuildStrategyError(str(exc)) from exc
+    except Exception as exc:
+        raise BuildStrategyError(f"failed to fetch makefile: {exc}") from exc
     _reset_directory(src_dir)
-    with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+    with zipfile.ZipFile(archive_path) as zf:
         zf.extractall(src_dir)
     template_name = ("function.h" if meta.language
                      in (Language.C, Language.CPP) else "student_impl.py")
@@ -165,11 +226,128 @@ def _finalize_function_only_artifacts(src_dir: Path, language: Language):
 
 def _ensure_single_executable(src_dir: Path, allowed: Iterable[str]):
     allowed = set(allowed)
-    exec_files = [
-        item for item in src_dir.iterdir()
-        if item.is_file() and os.access(item, os.X_OK)
-    ]
+    exec_files = []
+    for item in src_dir.iterdir():
+        if not item.is_file():
+            continue
+        if not os.access(item, os.X_OK):
+            continue
+        # Only count true binary executables (ELF format), not scripts or text files
+        # This handles macOS zip files that may preserve executable permissions on text files
+        try:
+            with open(item, "rb") as f:
+                header = f.read(4)
+                # Check for ELF magic number (Linux executables)
+                if header[:4] == b"\x7fELF":
+                    exec_files.append(item)
+        except (IOError, OSError):
+            # If we can't read it, skip it
+            pass
     extras = [item for item in exec_files if item.name not in allowed]
     if extras:
         raise BuildStrategyError(
             "only one executable named a.out is allowed in zip submissions")
+
+
+def _prepare_teacher_artifacts(meta: Meta,
+                               submission_dir: Path,
+                               problem_id: int | None = None):
+    teacher_lang_val = (meta.assetPaths or {}).get("teacherLang")
+    teacher_lang_map = {
+        "c": Language.C,
+        "cpp": Language.CPP,
+        "py": Language.PY,
+    }
+    teacher_lang = teacher_lang_map.get(str(teacher_lang_val or "").lower())
+    if teacher_lang is None:
+        raise BuildStrategyError("interactive mode requires teacherLang")
+    teacher_path = meta.assetPaths.get("teacher_file") if getattr(
+        meta, "assetPaths", None) else None
+    if not teacher_path:
+        raise BuildStrategyError("interactive mode requires Teacher_file")
+    # Use teacher/common for compiled teacher artifacts
+    teacher_dir = submission_dir / "teacher" / "common"
+    parent_dir = submission_dir / "teacher"
+    if parent_dir.exists():
+        shutil.rmtree(parent_dir)
+    teacher_dir.mkdir(parents=True, exist_ok=True)
+    teacher_filename = Path(teacher_path).name
+    try:
+        teacher_asset_path = ensure_custom_asset(
+            problem_id=problem_id,
+            asset_type="teacher_file",
+            filename=teacher_filename,
+        )
+    except AssetNotFoundError as exc:
+        raise BuildStrategyError(str(exc)) from exc
+    except Exception as exc:
+        raise BuildStrategyError(
+            f"failed to fetch teacher file: {exc}") from exc
+    ext = {
+        Language.C: ".c",
+        Language.CPP: ".cpp",
+        Language.PY: ".py",
+    }.get(teacher_lang)
+    if ext is None:
+        raise BuildStrategyError("unsupported teacher language")
+    src_path = teacher_dir / f"main{ext}"
+    src_path.write_bytes(teacher_asset_path.read_bytes())
+    # Compile if needed
+    if teacher_lang == Language.PY:
+        if not src_path.exists():
+            raise BuildStrategyError("teacher script missing")
+        return
+    compile_res = SubmissionRunner.compile_at_path(
+        src_dir=str(teacher_dir.resolve()),
+        lang=_lang_key(teacher_lang),
+    )
+    if compile_res.get("Status") != "AC":
+        err_msg = compile_res.get("Stderr") or compile_res.get(
+            "ExitMsg") or "teacher compile failed"
+        logging.getLogger(__name__).error("Teacher compile failed",
+                                          extra={
+                                              "problem_id": problem_id,
+                                              "error": err_msg,
+                                          })
+        raise BuildStrategyError(
+            "Interactive judge program failed to compile. Please contact course staff."
+        )
+    binary = teacher_dir / "teacher_main"
+    if not binary.exists():
+        raise BuildStrategyError("teacher binary missing after compile")
+    # also ensure ./main exists for sandbox execution
+    main_exec = teacher_dir / "main"
+    if not main_exec.exists():
+        try:
+            os.link(binary, main_exec)
+        except Exception:
+            try:
+                import shutil
+
+                shutil.copy(binary, main_exec)
+            except Exception:
+                pass
+    os.chmod(binary, binary.stat().st_mode | 0o111)
+    if main_exec.exists():
+        try:
+            os.chmod(main_exec, main_exec.stat().st_mode | 0o111)
+        except Exception:
+            pass
+
+
+def _resolve_teacher_lang(meta: Meta, teacher_dir: Path) -> Language:
+    # priority: assetPaths.teacherLang -> file suffix -> meta.language
+    teacher_lang_val = (meta.assetPaths.get("teacherLang") if getattr(
+        meta, "assetPaths", None) else None)
+    if isinstance(teacher_lang_val, str):
+        mapping = {"c": Language.C, "cpp": Language.CPP, "py": Language.PY}
+        if teacher_lang_val in mapping:
+            return mapping[teacher_lang_val]
+    # infer by existing files
+    if (teacher_dir / "main.py").exists():
+        return Language.PY
+    if (teacher_dir / "main.cpp").exists():
+        return Language.CPP
+    if (teacher_dir / "main.c").exists():
+        return Language.C
+    return Language(meta.language)
