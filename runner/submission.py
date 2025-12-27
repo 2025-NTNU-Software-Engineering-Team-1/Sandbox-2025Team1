@@ -127,7 +127,38 @@ class SubmissionRunner:
                 pass
         return payload
 
+    def _error_result(self, message: str) -> dict:
+        return {
+            "Status": "JE",
+            "Stdout": "",
+            "Stderr": message,
+            "Duration": -1,
+            "MemUsage": -1,
+            "DockerExitCode": 1,
+        }
+
     def run(self, skip_diff: bool = False):
+
+        def _resolve_container_path(path_str: str) -> str:
+            path = pathlib.Path(path_str).expanduser()
+            if not path.is_absolute():
+                return str((self.translator.sandbox_root / path).resolve())
+            try:
+                rel = path.relative_to(self.translator.host_root)
+            except ValueError:
+                return str(path)
+            return str((self.translator.sandbox_root / rel).resolve())
+
+        if self.testdata_input_path:
+            input_path = _resolve_container_path(self.testdata_input_path)
+            if not os.path.exists(input_path):
+                return self._error_result(
+                    f"testcase input not found: {self.testdata_input_path}")
+        if self.testdata_output_path:
+            output_path = _resolve_container_path(self.testdata_output_path)
+            if not os.path.exists(output_path):
+                return self._error_result(
+                    f"testcase output not found: {self.testdata_output_path}")
         try:
             result = Sandbox(
                 time_limit=self.time_limit,
@@ -142,9 +173,13 @@ class SubmissionRunner:
                 network_mode=self.network_mode,
             ).run()
         except JudgeError:
-            return {"Status": "JE"}
-        with open(self.testdata_output_path, "r") as f:
-            ans_output = f.read()
+            return self._error_result("sandbox judge error")
+        try:
+            with open(self.testdata_output_path, "r") as f:
+                ans_output = f.read()
+        except FileNotFoundError:
+            return self._error_result(
+                f"testcase output not found: {self.testdata_output_path}")
         status = {"TLE", "MLE", "RE", "OLE"}
         if result.Status not in status:
             if skip_diff:

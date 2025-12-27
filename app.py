@@ -104,7 +104,12 @@ def submit(submission_id: str):
     meta = get_problem_meta(problem_id, language)
     if is_trial:
         # Dynamically generate tasks from actual test files
-        trial_tasks = scan_and_generate_tasks(testdata_path)
+        base_task = meta.tasks[0]
+        trial_tasks = scan_and_generate_tasks(
+            testdata_path,
+            base_time_limit=base_task.timeLimit,
+            base_memory_limit=base_task.memoryLimit,
+        )
         if trial_tasks:
             # Override meta.tasks with scanned tasks
             # Note: We need to convert to proper Task objects

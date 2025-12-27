@@ -164,7 +164,15 @@ def ensure_testdata(problem_id: int):
         testdata = fetch_testdata(problem_id)
         problem_root = get_problem_root(problem_id)
         if problem_root.exists():
-            shutil.rmtree(problem_root)
+            for child in problem_root.iterdir():
+                if child.name == "public":
+                    continue
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+        else:
+            problem_root.mkdir(parents=True, exist_ok=True)
         with ZipFile(io.BytesIO(testdata)) as zf:
             _safe_extract_zip(zf, problem_root)
         meta = fetch_problem_meta(problem_id)
@@ -251,9 +259,8 @@ def ensure_public_testdata(problem_id: int):
         client.setex(key, 600, checksum)
 
 
-def scan_and_generate_tasks(testdata_path: Path,
-                            default_time_limit: int = 1000,
-                            default_memory_limit: int = 65536) -> list:
+def scan_and_generate_tasks(testdata_path: Path, base_time_limit: int,
+                            base_memory_limit: int) -> list:
     """
     Scan test data directory and generate tasks configuration.
     Used for Trial Mode where we dynamically generate tasks from actual .in files.
@@ -262,8 +269,8 @@ def scan_and_generate_tasks(testdata_path: Path,
     
     Args:
         testdata_path: Path to test data directory
-        default_time_limit: Default time limit in ms (default: 1000)
-        default_memory_limit: Default memory limit in KB (default: 65536)
+        base_time_limit: Time limit in ms from task 0 of normal submission
+        base_memory_limit: Memory limit in KB from task 0 of normal submission
     
     Returns:
         List of task dictionaries with caseCount, taskScore, timeLimit, memoryLimit
@@ -300,8 +307,8 @@ def scan_and_generate_tasks(testdata_path: Path,
         tasks.append({
             "caseCount": task_cases[task_no],
             "taskScore": task_score,
-            "timeLimit": default_time_limit,
-            "memoryLimit": default_memory_limit,
+            "timeLimit": base_time_limit,
+            "memoryLimit": base_memory_limit,
         })
 
     return tasks
