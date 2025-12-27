@@ -71,12 +71,12 @@ class InteractiveRunner:
                 "mode": "ro"
             },
         }
-        
+
         # network settings - same logic as sandbox.py
         is_net_disabled = self.network_mode == "none"
         is_container_mode = self.network_mode.startswith("container:")
         is_network_name = not is_net_disabled and not is_container_mode and self.network_mode != "none"
-        
+
         if is_container_mode:
             # Share network with router container
             host_config = client.create_host_config(
@@ -94,9 +94,8 @@ class InteractiveRunner:
                 mem_limit=f"{max(self.mem_limit,0)}k",
                 tmpfs={"/tmp": "rw,noexec,nosuid"},
             )
-            networking_config = client.create_networking_config({
-                self.network_mode: client.create_endpoint_config()
-            })
+            networking_config = client.create_networking_config(
+                {self.network_mode: client.create_endpoint_config()})
         else:
             # No network or default
             host_config = client.create_host_config(
@@ -106,7 +105,7 @@ class InteractiveRunner:
                 tmpfs={"/tmp": "rw,noexec,nosuid"},
             )
             networking_config = None
-        
+
         # testcase.in is now in teacher_case_dir, mounted at /teacher
         case_path_container = "/teacher/testcase.in"
 

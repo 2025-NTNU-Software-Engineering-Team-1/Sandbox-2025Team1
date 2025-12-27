@@ -24,10 +24,10 @@ def read_bmp(path: Path):
     mv = memoryview(data)[data_offset:]
     # normalize to top-down order
     for row in range(abs_h):
-        src = mv[row * stride : row * stride + width * 3]
+        src = mv[row * stride:row * stride + width * 3]
         y = abs_h - 1 - row if height > 0 else row
         start = y * width * 3
-        pixels[start : start + width * 3] = src
+        pixels[start:start + width * 3] = src
     header = bytearray(data[:data_offset])
     return width, abs_h, pixels, header, data_offset
 
@@ -58,7 +58,7 @@ def write_bmp(
         f.write(header)
         for row in range(height - 1, -1, -1):  # bottom-up
             start = row * row_bytes
-            f.write(pixels[start : start + row_bytes])
+            f.write(pixels[start:start + row_bytes])
             if pad:
                 f.write(pad)
 
@@ -71,9 +71,9 @@ def download_file(url: str, dest_path: Path):
     try:
         # 處理 GitHub blob URL，轉換為 raw URL 以獲取原始圖片
         if "github.com" in url and "/blob/" in url:
-            url = url.replace("github.com", "raw.githubusercontent.com").replace(
-                "/blob/", "/"
-            )
+            url = url.replace("github.com",
+                              "raw.githubusercontent.com").replace(
+                                  "/blob/", "/")
             print(f"Converted to raw URL: {url}")
 
         # 建立一個不驗證 SSL 憑證的 context
@@ -81,8 +81,8 @@ def download_file(url: str, dest_path: Path):
 
         # 傳入 context 參數來忽略憑證錯誤
         with urllib.request.urlopen(
-            url, context=ssl_context
-        ) as response, dest_path.open("wb") as out_file:
+                url, context=ssl_context) as response, dest_path.open(
+                    "wb") as out_file:
             out_file.write(response.read())
         print(f"Saved to {dest_path}")
     except Exception as e:

@@ -106,9 +106,11 @@ class Sandbox:
         is_net_disabled = self.network_mode == "none"
         is_container_mode = self.network_mode.startswith("container:")
         is_network_name = not is_net_disabled and not is_container_mode and self.network_mode != "none"
-        
-        logging.info(f"[Sandbox] network_mode={self.network_mode}, is_net_disabled={is_net_disabled}, is_container_mode={is_container_mode}, is_network_name={is_network_name}")
-        
+
+        logging.info(
+            f"[Sandbox] network_mode={self.network_mode}, is_net_disabled={is_net_disabled}, is_container_mode={is_container_mode}, is_network_name={is_network_name}"
+        )
+
         # Build host_config
         if is_container_mode:
             # Share network with router container
@@ -125,9 +127,8 @@ class Sandbox:
                 network_mode=self.network_mode,  # network name as network_mode
             )
             # Create networking config with aliases for DNS resolution
-            networking_config = self.client.create_networking_config({
-                self.network_mode: self.client.create_endpoint_config()
-            })
+            networking_config = self.client.create_networking_config(
+                {self.network_mode: self.client.create_endpoint_config()})
         else:
             # No network or default
             host_config = self.client.create_host_config(

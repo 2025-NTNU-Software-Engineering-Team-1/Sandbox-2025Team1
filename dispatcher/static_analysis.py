@@ -728,7 +728,11 @@ class StaticAnalyzer:
 
             if is_violation:
                 file_name = item.get("file", "")
-                violations.append({"content": name, "line": lineno, "file": file_name})
+                violations.append({
+                    "content": name,
+                    "line": lineno,
+                    "file": file_name
+                })
 
         # Deduplicate results by line and content
         unique_violations = []
@@ -766,7 +770,10 @@ class PythonAstVisitor(ast.NodeVisitor):
     for python analyze
     """
 
-    def __init__(self, global_functions: set, defined_classes: dict, file_name: str = ""):
+    def __init__(self,
+                 global_functions: set,
+                 defined_classes: dict,
+                 file_name: str = ""):
         self.facts = {
             "imports": [],
             "function_calls": [],
