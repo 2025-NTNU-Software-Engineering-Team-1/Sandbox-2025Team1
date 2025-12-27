@@ -6,6 +6,23 @@ from dispatcher.constant import Language
 BASE = Path(__file__).resolve().parent
 
 
+def _iter_sample_dirs(base: Path) -> list[Path]:
+    sample_dirs = [base]
+    for child in sorted(base.iterdir()):
+        if child.is_dir():
+            sample_dirs.append(child)
+    return sample_dirs
+
+
+def _find_sample_file(base: Path, names: tuple[str, ...]) -> Path | None:
+    for folder in _iter_sample_dirs(base):
+        for name in names:
+            candidate = folder / name
+            if candidate.exists():
+                return candidate
+    return None
+
+
 def test_python_static_analysis_violations():
     test_file_path = BASE / "static_analysis" / "test_file"
     rules_path = test_file_path / "rules.json"
@@ -19,10 +36,10 @@ def test_python_static_analysis_violations():
     # prepare common layout
     common = test_file_path / "src" / "common"
     common.mkdir(parents=True, exist_ok=True)
-    for fname in ("main.py", ):
-        src = test_file_path / fname
-        if src.exists():
-            (common / fname).write_bytes(src.read_bytes())
+    src = _find_sample_file(test_file_path, ("main.py", ))
+    if not src:
+        return
+    (common / "main.py").write_bytes(src.read_bytes())
 
     analyzer = StaticAnalyzer()
 
@@ -45,10 +62,14 @@ def test_c_static_analysis_violations():
 
     common = test_file_path / "src" / "common"
     common.mkdir(parents=True, exist_ok=True)
-    for fname in ("_main.c", "main.cpp"):
-        src = test_file_path / fname
-        if src.exists():
-            (common / Path(fname).name).write_bytes(src.read_bytes())
+    c_src = _find_sample_file(test_file_path, ("main.c", "_main.c"))
+    cpp_src = _find_sample_file(test_file_path, ("main.cpp", "_main.cpp"))
+    if not c_src and not cpp_src:
+        return
+    if c_src:
+        (common / "main.c").write_bytes(c_src.read_bytes())
+    if cpp_src:
+        (common / "main.cpp").write_bytes(cpp_src.read_bytes())
 
     analyzer = StaticAnalyzer()
     result = analyzer.analyze(
