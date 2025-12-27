@@ -220,7 +220,7 @@ def _build_sa_report_text(analysis_result) -> str:
     report = analysis_result.message.strip()
     if analysis_result.json_result:
         report += (
-            "\n\n---------------------- Violations (JSON) ----------------------\n"
+            "\n\n---------------------------- Violations (JSON) ----------------------------\n"
         )
         report += analysis_result.to_json_str()
     return report
@@ -250,8 +250,8 @@ def build_sa_payload(analysis_result, status: str) -> dict:
 
 def format_sa_failure_message(message: str) -> str:
     base = (message or "").strip()
-    return f"Static Analysis Not Passed: {base}".strip(
-    ) or "Static Analysis Not Passed"
+    return f"Static Analysis Not Passed:\n {base}".strip(
+    ) or "Static Analysis Not Passed\n"
 
 
 def build_sa_ae_task_content(meta: "Meta", stderr: str) -> dict:
@@ -347,7 +347,7 @@ class AnalysisResult:
     def set_violations(self, structured_violations: dict):
         self.json_result = structured_violations
 
-        msg = "\n-------------------------- Static Analysis Result -------------------------"
+        msg = "\n\n -------------------------- Static Analysis Result -------------------------"
         for item, lines in structured_violations.items():
             if item == "model":
                 continue
@@ -356,10 +356,15 @@ class AnalysisResult:
             msg += f"\n [Category: {item}]"
             # Deduplicate lines for display
             seen_lines = set()
+            last_file_name = None
             for line in lines:
-                val = f"{line['line']}:{line['content']}"
+                file_name = line.get('file', '')
+                val = f"{file_name}:{line['line']}:{line['content']}"
                 if val not in seen_lines:
-                    msg += f"\n    Line {line['line']:<4} : {line['content']}"
+                    if file_name and file_name != last_file_name:
+                        msg += f"\n [{file_name}]"
+                        last_file_name = file_name
+                    msg += f"\n    Line {line['line']:>4} : {line['content']}"
                     seen_lines.add(val)
 
         self.message += msg
@@ -542,9 +547,11 @@ class StaticAnalyzer:
         }
 
         for tree, path in parsed_trees:
+            file_name = path.name
             visitor = PythonAstVisitor(
                 global_functions=global_funcs,
                 defined_classes=defined_classes,
+                file_name=file_name,
             )
             visitor.visit(tree)
             visitor.detect_cycles()
@@ -618,7 +625,8 @@ class StaticAnalyzer:
                 )
                 return self.result
 
-            visitor = CppAstVisitor(str(target_path))
+            file_name = target_path.name
+            visitor = CppAstVisitor(str(target_path), file_name=file_name)
             visitor.visit(translation_unit.cursor)
             visitor.detect_cycles()
             _merge_facts(facts, visitor.facts)
@@ -719,7 +727,8 @@ class StaticAnalyzer:
                     is_violation = True
 
             if is_violation:
-                violations.append({"content": name, "line": lineno})
+                file_name = item.get("file", "")
+                violations.append({"content": name, "line": lineno, "file": file_name})
 
         # Deduplicate results by line and content
         unique_violations = []
@@ -757,7 +766,7 @@ class PythonAstVisitor(ast.NodeVisitor):
     for python analyze
     """
 
-    def __init__(self, global_functions: set, defined_classes: dict):
+    def __init__(self, global_functions: set, defined_classes: dict, file_name: str = ""):
         self.facts = {
             "imports": [],
             "function_calls": [],
@@ -768,13 +777,15 @@ class PythonAstVisitor(ast.NodeVisitor):
         self.defined_classes = defined_classes
         self.variable_types = {}
         self.call_graph = {}
+        self.file_name = file_name
 
     def generic_visit(self, node):
         tag_name = node.__class__.__name__.lower()
         if hasattr(node, "lineno"):
             self.facts["syntax"].append({
                 "name": tag_name,
-                "line": node.lineno
+                "line": node.lineno,
+                "file": self.file_name
             })
         super().generic_visit(node)
 
@@ -793,14 +804,16 @@ class PythonAstVisitor(ast.NodeVisitor):
         for alias in node.names:
             self.facts["imports"].append({
                 "name": alias.name,
-                "line": node.lineno
+                "line": node.lineno,
+                "file": self.file_name
             })
 
     def visit_ImportFrom(self, node):
         if node.module:
             self.facts["imports"].append({
                 "name": node.module,
-                "line": node.lineno
+                "line": node.lineno,
+                "file": self.file_name
             })
         self.generic_visit(node)
 
@@ -858,7 +871,8 @@ class PythonAstVisitor(ast.NodeVisitor):
                     and called_func_name in self.current_function_stack):
                 self.facts["syntax"].append({
                     "name": "recursive",
-                    "line": node.lineno
+                    "line": node.lineno,
+                    "file": self.file_name
                 })
             if self.current_function_stack:
                 caller = self.current_function_stack[-1]
@@ -869,7 +883,8 @@ class PythonAstVisitor(ast.NodeVisitor):
         else:
             self.facts["function_calls"].append({
                 "name": full_call_name,
-                "line": node.lineno
+                "line": node.lineno,
+                "file": self.file_name
             })
         self.generic_visit(node)
 
@@ -895,7 +910,8 @@ class PythonAstVisitor(ast.NodeVisitor):
                         if not already_reported:
                             self.facts["syntax"].append({
                                 "name": "recursive",
-                                "line": lineno
+                                "line": lineno,
+                                "file": self.file_name
                             })
             recursion_stack.remove(u)
 
@@ -906,8 +922,9 @@ class PythonAstVisitor(ast.NodeVisitor):
 
 class CppAstVisitor:
 
-    def __init__(self, main_file_path: str):
+    def __init__(self, main_file_path: str, file_name: str = ""):
         self.main_file_path = main_file_path
+        self.file_name = file_name or pathlib.Path(main_file_path).name
         self.facts = {
             "headers": [],
             "function_calls": [],
@@ -917,18 +934,31 @@ class CppAstVisitor:
         self.usr_to_name = {}
 
     def visit(self, node, current_function_usr=None):
-        if node.kind == clang.cindex.CursorKind.INCLUSION_DIRECTIVE:
+        # Handle unknown CursorKind gracefully (e.g., ID 437 from newer C++ features)
+        try:
+            node_kind = node.kind
+        except ValueError:
+            # libclang doesn't recognize this cursor kind, skip it
+            for child in node.get_children():
+                try:
+                    self.visit(child, current_function_usr)
+                except ValueError:
+                    pass
+            return
+
+        if node_kind == clang.cindex.CursorKind.INCLUSION_DIRECTIVE:
             if str(node.location.file) == self.main_file_path:
                 self.facts["headers"].append({
                     "name": node.spelling,
-                    "line": node.location.line
+                    "line": node.location.line,
+                    "file": self.file_name
                 })
             return
 
         in_main = (node.location and node.location.file
                    and str(node.location.file) == self.main_file_path)
 
-        if node.kind in (
+        if node_kind in (
                 clang.cindex.CursorKind.FUNCTION_DECL,
                 clang.cindex.CursorKind.CXX_METHOD,
                 clang.cindex.CursorKind.CONSTRUCTOR,
@@ -942,21 +972,23 @@ class CppAstVisitor:
 
         if in_main:
             # General syntax detection using CPP_CURSOR_KIND_MAP (66 types)
-            if node.kind in CPP_CURSOR_KIND_MAP:
-                syntax_name = CPP_CURSOR_KIND_MAP[node.kind]
+            if node_kind in CPP_CURSOR_KIND_MAP:
+                syntax_name = CPP_CURSOR_KIND_MAP[node_kind]
                 self.facts["syntax"].append({
                     "name": syntax_name,
-                    "line": node.location.line
+                    "line": node.location.line,
+                    "file": self.file_name
                 })
                 # Backward compatibility: range_for also counts as "for"
                 if syntax_name == "range_for":
                     self.facts["syntax"].append({
                         "name": "for",
-                        "line": node.location.line
+                        "line": node.location.line,
+                        "file": self.file_name
                     })
 
             # Handle function calls for call graph (recursion detection)
-            if node.kind in (
+            if node_kind in (
                     clang.cindex.CursorKind.CALL_EXPR,
                     clang.cindex.CursorKind.MEMBER_REF_EXPR,
             ):
@@ -985,7 +1017,8 @@ class CppAstVisitor:
             if callee_name:
                 self.facts["function_calls"].append({
                     "name": callee_name,
-                    "line": node.location.line
+                    "line": node.location.line,
+                    "file": self.file_name
                 })
         else:
             if caller_usr:
@@ -1016,7 +1049,8 @@ class CppAstVisitor:
                         if not already_reported:
                             self.facts["syntax"].append({
                                 "name": "recursive",
-                                "line": lineno
+                                "line": lineno,
+                                "file": self.file_name
                             })
             recursion_stack.remove(u)
 
