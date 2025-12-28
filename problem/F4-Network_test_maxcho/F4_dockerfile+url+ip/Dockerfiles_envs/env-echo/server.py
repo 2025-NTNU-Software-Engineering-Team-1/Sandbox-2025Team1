@@ -5,10 +5,12 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 MESSAGE = os.environ.get("ECHO_MESSAGE", "Hello from Echo Service!")
 
+
 class EchoHandler(BaseHTTPRequestHandler):
+
     def log_message(self, format, *args):
         print(f"[LOG] {args[0]}")
-    
+
     def do_GET(self):
         if self.path == "/health":
             response = "OK"
@@ -17,11 +19,12 @@ class EchoHandler(BaseHTTPRequestHandler):
             response = f"[ECHO] {text}"
         else:
             response = MESSAGE
-        
+
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
         self.wfile.write(response.encode())
+
 
 if __name__ == "__main__":
     port = 9000

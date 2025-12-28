@@ -75,7 +75,8 @@ class NetworkController:
 
         # Cleanup stale resources from previous runs on initialization
         if cleanup_on_init and self.client:
-            logger().info("Performing startup cleanup of stale NOJ resources...")
+            logger().info(
+                "Performing startup cleanup of stale NOJ resources...")
             self.cleanup_stale_resources()
 
     def cleanup_stale_resources(self, submission_id: str = None):
@@ -89,10 +90,12 @@ class NetworkController:
         2. On startup to clean any orphaned resources (without submission_id)
         """
         if not self.client:
-            logger().warning("Docker client not initialized, skipping stale cleanup")
+            logger().warning(
+                "Docker client not initialized, skipping stale cleanup")
             return
 
-        logger().info(f"Cleaning up stale resources (submission_id={submission_id})...")
+        logger().info(
+            f"Cleaning up stale resources (submission_id={submission_id})...")
 
         # Define patterns for containers and networks to clean
         if submission_id:
@@ -117,11 +120,13 @@ class NetworkController:
                     # Docker names start with "/"
                     clean_name = name.lstrip("/")
                     for pattern in container_patterns:
-                        if clean_name.startswith(pattern) or pattern in clean_name:
+                        if clean_name.startswith(
+                                pattern) or pattern in clean_name:
                             stale_containers.append(container["Id"])
                             break
         except Exception as e:
-            logger().warning(f"Failed to list containers for stale cleanup: {e}")
+            logger().warning(
+                f"Failed to list containers for stale cleanup: {e}")
 
         # Remove stale containers
         for cid in stale_containers:
@@ -133,7 +138,8 @@ class NetworkController:
             try:
                 self.client.remove_container(cid, v=True, force=True)
             except Exception as e:
-                logger().warning(f"Failed to remove stale container {cid[:12]}: {e}")
+                logger().warning(
+                    f"Failed to remove stale container {cid[:12]}: {e}")
 
         # Step 2: Find and remove stale networks
         stale_networks = []
@@ -154,13 +160,13 @@ class NetworkController:
                 logger().info(f"Removing stale network: {nid[:12]}")
                 self.client.remove_network(nid)
             except Exception as e:
-                logger().warning(f"Failed to remove stale network {nid[:12]}: {e}")
+                logger().warning(
+                    f"Failed to remove stale network {nid[:12]}: {e}")
 
         if stale_containers or stale_networks:
             logger().info(
                 f"Stale cleanup complete: removed {len(stale_containers)} containers, "
-                f"{len(stale_networks)} networks"
-            )
+                f"{len(stale_networks)} networks")
         else:
             logger().debug("No stale resources found")
 
@@ -365,15 +371,16 @@ class NetworkController:
         if external_config:
             ip_rules = external_config.get("ip", [])
             url_rules = external_config.get("url", [])
-            model = external_config.get("model", "White").lower()  # Default: White
-            
+            model = external_config.get("model",
+                                        "White").lower()  # Default: White
+
             logger().info(
                 f"(*_*)[Router Decision] external_config={external_config}, "
                 f"model={model}, "
                 f"ip_rules={ip_rules} (len={len(ip_rules) if ip_rules else 0}), "
                 f"url_rules={url_rules} (len={len(url_rules) if url_rules else 0})"
             )
-            
+
             if ip_rules or url_rules:
                 # Has rules: always need router to enforce them
                 need_router = True
@@ -383,12 +390,14 @@ class NetworkController:
                 # Black mode with empty rules: need router to allow all (open network)
                 need_router = True
                 logger().info(
-                    f"(*_*)[Router Decision] need_router=True (black mode, allow all)")
+                    f"(*_*)[Router Decision] need_router=True (black mode, allow all)"
+                )
             else:
                 # White mode with empty rules: no router (sandbox default blocks network)
                 need_router = False
                 logger().info(
-                    f"(*_*)[Router Decision] need_router=False (white mode, block all)")
+                    f"(*_*)[Router Decision] need_router=False (white mode, block all)"
+                )
         else:
             logger().info(
                 f"(*_*)[Router Decision] need_router=False (no external_config)"
@@ -740,7 +749,7 @@ class NetworkController:
         logger().debug(
             f"(*_*)[In _start_router] Config injected to router-{submission_id}, config: {config_data}"
         )
-        
+
         self.client.start(container.get("Id"))
         logger().info(
             f"(*_*)[In _start_router] Router started: {container.get('Id')[:12]}"
