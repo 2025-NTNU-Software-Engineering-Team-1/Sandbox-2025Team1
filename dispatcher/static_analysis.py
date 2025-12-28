@@ -11,7 +11,7 @@ except ImportError:
     clang = None  # type: ignore
 
 from dispatcher import config as dispatcher_config
-from .constant import Language
+from .constant import Language, BuildStrategy
 from .utils import logger
 from .result_factory import make_all_cases_result
 
@@ -286,12 +286,30 @@ def run_static_analysis(
                 rules=rules_json,
             )
         else:
-            analysis_result = analyzer.analyze(
-                submission_id=submission_id,
-                language=meta.language,
-                rules=rules_json,
-                base_dir=submission_path,
-            )
+            if meta.buildStrategy == BuildStrategy.MAKE_FUNCTION_ONLY:
+                src_base = submission_path / "src"
+                if (src_base / "common").exists():
+                    src_base = src_base / "common"
+                target_name = ("student_impl.py" if meta.language
+                               == Language.PY else "function.h")
+                target_path = src_base / target_name
+                if not target_path.exists():
+                    raise StaticAnalysisError(
+                        f"Not found '{target_name}'. Source path: {src_base}")
+                analysis_result = analyzer.analyze(
+                    submission_id=submission_id,
+                    language=meta.language,
+                    rules=rules_json,
+                    base_dir=submission_path,
+                    files=[target_path],
+                )
+            else:
+                analysis_result = analyzer.analyze(
+                    submission_id=submission_id,
+                    language=meta.language,
+                    rules=rules_json,
+                    base_dir=submission_path,
+                )
         status = "pass" if analysis_result.is_success() else "fail"
         if getattr(analysis_result, "_skipped", False):
             status = "skip"
@@ -384,6 +402,7 @@ class StaticAnalyzer:
         language: Language,
         rules: dict = None,
         base_dir: pathlib.Path | str | None = None,
+        files: list[pathlib.Path] | None = None,
     ):
         """
         HERE is entrance
@@ -413,7 +432,7 @@ class StaticAnalyzer:
 
         try:
             if language == Language.PY:
-                self._analyze_python(source_code_path, rules)
+                self._analyze_python(source_code_path, rules, files=files)
 
             elif language == Language.C or language == Language.CPP:
                 if clang is None:
@@ -421,7 +440,10 @@ class StaticAnalyzer:
                     self.result.mark_skipped(
                         "\nlibclang missing; static analysis skipped.")
                     return self.result
-                self._analyze_c_cpp(source_code_path, rules, language)
+                self._analyze_c_cpp(source_code_path,
+                                    rules,
+                                    language,
+                                    files=files)
 
             else:
                 logger().warning(

@@ -1,7 +1,11 @@
 import json
 from pathlib import Path
-from dispatcher.static_analysis import StaticAnalyzer, _collect_sources_from_makefile
-from dispatcher.constant import Language
+from dispatcher.static_analysis import (StaticAnalyzer,
+                                        _collect_sources_from_makefile,
+                                        run_static_analysis)
+from dispatcher.constant import (AcceptedFormat, BuildStrategy, ExecutionMode,
+                                 Language)
+from dispatcher.meta import Meta, Task
 
 BASE = Path(__file__).resolve().parent
 
@@ -77,6 +81,47 @@ def test_c_static_analysis_violations():
         language=Language.C,
         rules=rules,
     )
+
+
+def _function_only_meta(language: Language) -> Meta:
+    return Meta(
+        language=language,
+        tasks=[
+            Task(taskScore=100, memoryLimit=1024, timeLimit=1000, caseCount=1)
+        ],
+        acceptedFormat=AcceptedFormat.CODE,
+        executionMode=ExecutionMode.FUNCTION_ONLY,
+        buildStrategy=BuildStrategy.MAKE_FUNCTION_ONLY,
+    )
+
+
+def test_function_only_static_analysis_uses_student_file(tmp_path):
+    submission_id = "func-sa"
+    submission_dir = tmp_path / submission_id
+    src_dir = submission_dir / "src" / "common"
+    src_dir.mkdir(parents=True)
+    (src_dir /
+     "function.h").write_text("int add(int a, int b) { return a + b; }\n")
+    rules = {
+        "model": "black",
+        "syntax": [],
+        "imports": [],
+        "headers": [],
+        "functions": [],
+    }
+
+    success, payload, task_content = run_static_analysis(
+        submission_id=submission_id,
+        submission_path=submission_dir,
+        meta=_function_only_meta(Language.C),
+        rules_json=rules,
+        is_zip_mode=False,
+    )
+
+    assert success is True
+    assert payload is not None
+    assert payload["status"] in {"pass", "skip"}
+    assert task_content is None
 
 
 def test_python_syntax_blacklist_custom(tmp_path):
