@@ -12,6 +12,19 @@ actual AI API calls using the google-generativeai library.
 import sys
 import os
 
+DEBUG = os.environ.get("CHECKER_DEBUG", "1").strip().lower() not in (
+    "",
+    "0",
+    "false",
+    "no",
+    "off",
+)
+
+
+def debug_log(message):
+    if DEBUG:
+        print(f"[DEBUG] {message}", file=sys.stderr)
+
 
 def check(input_file, output_file, answer_file):
     """
@@ -33,6 +46,10 @@ def check(input_file, output_file, answer_file):
     model = os.environ.get('AI_MODEL', 'gemini-2.5-flash')
 
     try:
+        debug_log("files: input=%s output=%s answer=%s" %
+                  (input_file, output_file, answer_file))
+        debug_log("ai_config: api_key_present=%s model=%s" %
+                  (bool(api_key), model))
         # Read files
         with open(input_file, 'r') as f:
             question = f.read().strip()
@@ -43,14 +60,23 @@ def check(input_file, output_file, answer_file):
         with open(answer_file, 'r') as f:
             expected_answer = f.read().strip()
 
+        debug_log("lengths: question=%d student=%d expected=%d" %
+                  (len(question), len(student_answer), len(expected_answer)))
+        debug_log("question_preview=%r" % question[:160])
+        debug_log("student_preview=%r" % student_answer[:160])
+        debug_log("expected_preview=%r" % expected_answer[:160])
+
         if not student_answer:
+            debug_log("empty student output")
             return "WA", "Empty output"
 
         # If AI API is available, use semantic evaluation
         if api_key:
             try:
+                debug_log("ai_eval: starting")
                 result = evaluate_with_ai(api_key, model, question,
                                           student_answer, expected_answer)
+                debug_log("ai_eval: result=%s message=%r" % result)
                 return result
             except Exception as e:
                 # Fall back to exact matching on AI failure
@@ -59,15 +85,21 @@ def check(input_file, output_file, answer_file):
         # Fallback: exact matching (case-insensitive, whitespace-normalized)
         student_normalized = ' '.join(student_answer.lower().split())
         expected_normalized = ' '.join(expected_answer.lower().split())
+        debug_log("fallback: normalized_student=%r" % student_normalized[:200])
+        debug_log("fallback: normalized_expected=%r" %
+                  expected_normalized[:200])
 
         if student_normalized == expected_normalized:
             return "AC", "Exact match (AI disabled or failed)"
         else:
+            debug_log("fallback: mismatch")
             return "WA", f"Answer mismatch. Expected: '{expected_answer[:50]}...'"
 
     except FileNotFoundError as e:
+        debug_log("file_not_found: %s" % e.filename)
         return "WA", f"File not found: {e.filename}"
     except Exception as e:
+        debug_log("checker_error: %s" % str(e))
         return "WA", f"Checker error: {str(e)}"
 
 
@@ -89,16 +121,17 @@ def evaluate_with_ai(api_key, model, question, student_answer,
     # For this demo, we simulate the AI evaluation:
 
     prompt = f"""
-You are a grading assistant. Evaluate if the student's answer is semantically correct.
+            You are a grading assistant. Evaluate if the student's answer is semantically correct.
 
-Question: {question}
+            Question: {question}
 
-Expected Answer: {expected_answer}
+            Expected Answer: {expected_answer}
 
-Student Answer: {student_answer}
+            Student Answer: {student_answer}
 
-Is the student's answer correct? Reply with only "CORRECT" or "INCORRECT" followed by a brief explanation.
-"""
+            Is the student's answer correct? Reply with only "CORRECT" or "INCORRECT" followed by a brief explanation.
+            """
+    debug_log("ai_prompt_len=%d" % len(prompt))
 
     # Simulated AI response for demo (remove in production)
     # In production, call the actual Gemini API here
@@ -110,8 +143,12 @@ Is the student's answer correct? Reply with only "CORRECT" or "INCORRECT" follow
     # Check for significant word overlap (simple semantic check)
     overlap = len(student_words & expected_words)
     total = len(expected_words)
+    ratio = (overlap / total) if total else 0.0
+    debug_log(
+        "ai_eval_demo: student_words=%d expected_words=%d overlap=%d ratio=%.4f"
+        % (len(student_words), len(expected_words), overlap, ratio))
 
-    if total > 0 and overlap / total >= 0.7:
+    if total > 0 and ratio >= 0.7:
         return "AC", f"AI Evaluation: Semantically correct (model: {model})"
     else:
         return "WA", f"AI Evaluation: Answer does not match expected semantics"
