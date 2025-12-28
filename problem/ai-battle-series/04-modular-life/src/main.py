@@ -1,7 +1,45 @@
-def main():
-    # TODO: implement solution.
-    pass
+def calculate_weighted_gpa(scores, credits):
+    total = sum(s * c for s, c in zip(scores, credits))
+    total_credits = sum(credits)
+    return total / total_credits if total_credits else 0.0
 
 
-if __name__ == "__main__":
-    main()
+def calculate_percentile_rank(all_scores, my_score):
+    less = sum(1 for s in all_scores if s < my_score)
+    equal = sum(1 for s in all_scores if s == my_score)
+    wins = less + (equal - 1) / 2.0 if equal > 0 else less
+    pr = wins * 100.0 / len(all_scores)
+    return int(round(pr))
+
+
+def score_to_gpa_points(score):
+    if score >= 90:
+        return 4.3
+    if score >= 85:
+        return 4.0
+    if score >= 80:
+        return 3.7
+    if score >= 77:
+        return 3.3
+    if score >= 73:
+        return 3.0
+    if score >= 70:
+        return 2.7
+    if score >= 67:
+        return 2.3
+    if score >= 63:
+        return 2.0
+    if score >= 60:
+        return 1.7
+    if score >= 50:
+        return 1.0
+    return 0.0
+
+
+def check_graduation(gpa, total_credits, required_credits, failed_subjects,
+                     max_failed):
+    if gpa >= 3.8 and total_credits >= required_credits * 1.1 - 1e-9 and failed_subjects == 0:
+        return 2
+    if total_credits >= required_credits and failed_subjects <= max_failed:
+        return 1
+    return 0

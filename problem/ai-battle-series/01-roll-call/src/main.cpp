@@ -1,49 +1,44 @@
-#include <iostream>
-#include <string>
-#include <unordered_map>
-#include <vector>
-#include <algorithm>
+#include <bits/stdc++.h>
+using namespace std;
 
 int main() {
-    std::ios::sync_with_stdio(false);
-    std::cin.tie(nullptr);
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
 
     int n = 0;
-    if (!(std::cin >> n)) {
+    if (!(cin >> n)) {
         return 0;
     }
 
-    std::unordered_map<std::string, int> best_priority;
-    best_priority.reserve(static_cast<size_t>(n));
+    unordered_map<string, int> best;
+    best.reserve(static_cast<size_t>(n) * 2);
 
     for (int i = 0; i < n; i++) {
-        std::string name;
+        string name;
         int priority = 0;
-        if (!(std::cin >> name >> priority)) {
-            break;
-        }
-        auto it = best_priority.find(name);
-        if (it == best_priority.end() || priority > it->second) {
-            best_priority[name] = priority;
+        cin >> name >> priority;
+        auto it = best.find(name);
+        if (it == best.end() || priority > it->second) {
+            best[name] = priority;
         }
     }
 
-    std::vector<std::pair<std::string, int>> entries;
-    entries.reserve(best_priority.size());
-    for (const auto &kv : best_priority) {
-        entries.emplace_back(kv.first, kv.second);
+    vector<pair<string, int>> items;
+    items.reserve(best.size());
+    for (const auto &kv : best) {
+        items.push_back(kv);
     }
 
-    std::sort(entries.begin(), entries.end(), [](const auto &a, const auto &b) {
+    sort(items.begin(), items.end(), [](const auto &a, const auto &b) {
         if (a.second != b.second) {
             return a.second > b.second;
         }
         return a.first < b.first;
     });
 
-    for (const auto &item : entries) {
-        std::cout << item.first << '\n';
+    for (const auto &item : items) {
+        cout << item.first << "
+";
     }
-
     return 0;
 }
