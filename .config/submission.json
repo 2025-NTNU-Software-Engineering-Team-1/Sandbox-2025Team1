@@ -1,7 +1,7 @@
 {
-    "working_dir": "/Users/maxcho/Desktop/Normal-OJ-2025Team1/Sandbox/submissions",
+    "working_dir": "",
     "sandbox_root": "/app",
-    "host_root": "/Users/maxcho/Desktop/Normal-OJ-2025Team1/Sandbox",
+    "host_root": "",
     "docker_url": "unix://var/run/docker.sock",
     "lang_id": {
         "c11": 0,
