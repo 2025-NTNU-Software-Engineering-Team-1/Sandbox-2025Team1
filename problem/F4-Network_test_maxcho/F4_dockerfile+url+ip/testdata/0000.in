@@ -1,0 +1,33 @@
+# Comprehensive Dockerfile + URL/IP Integration Test
+# Tests Docker sidecars AND external network whitelist
+
+# ===== Docker Sidecar Tests =====
+# Test all 5 Docker containers
+
+DOCKER env-python 8000 Hello from Server Container!
+DOCKER env-cpp 8080 Hello from C++ File!
+DOCKER env-echo 9000 Hello from Echo Service!
+DOCKER env-calc 9001 endpoints
+DOCKER env-api 9002 Welcome to the Interactive API!
+
+# ===== Whitelisted External Access Tests =====
+# 1.1.1.1 is whitelisted - should connect
+
+IP 1.1.1.1 443 connect
+IP 1.1.1.1 80 connect
+
+# www.google.com is whitelisted - should connect
+URL www.google.com 443 connect
+URL www.google.com 80 connect
+
+# ===== Blocked External Access Tests =====
+# These IPs are NOT whitelisted - should be blocked
+
+IP 8.8.8.8 443 block
+IP 9.9.9.9 443 block
+IP 208.67.222.222 443 block
+
+# These URLs are NOT whitelisted - should be sinkholed/blocked
+URL github.com 443 block
+URL facebook.com 443 block
+URL amazon.com 443 block

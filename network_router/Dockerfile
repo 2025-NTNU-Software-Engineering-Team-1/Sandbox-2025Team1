@@ -1,6 +1,7 @@
-FROM alpine:3.19
+FROM alpine:edge
 
-RUN apk add --no-cache nftables jq bash iproute2 bind-tools su-exec dnsmasq
+# Install dnsmasq with nftset support and other required packages
+RUN apk add --no-cache nftables jq bash iproute2 bind-tools su-exec dnsmasq-dnssec-nftset
 
 RUN mkdir -p /etc/network_config /etc/dnsmasq.d /var/log
 

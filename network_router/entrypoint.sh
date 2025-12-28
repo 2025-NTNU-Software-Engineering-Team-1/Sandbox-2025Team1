@@ -33,62 +33,14 @@ echo "Sidecar IPs: $SIDECAR_IPS"
 echo "Internal Names: $INTERNAL_NAMES"
 
 # ============================================================
-# 2. DNS Resolution with IPv6 Support and Retry
+# 2. Prepare domain list from URLs
 # ============================================================
-resolve_with_retry() {
-    local domain="$1"
-    local max_attempts=3
-    local attempt=1
-    local all_ips=""
-
-    while [ $attempt -le $max_attempts ]; do
-        # Resolve IPv4 (A records)
-        ipv4=$(timeout 5s dig +short "$domain" A 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || echo "")
-        # Resolve IPv6 (AAAA records)
-        ipv6=$(timeout 5s dig +short "$domain" AAAA 2>/dev/null | grep -E '^[0-9a-fA-F:]+$' || echo "")
-
-        if [ -n "$ipv4" ] || [ -n "$ipv6" ]; then
-            all_ips="$ipv4 $ipv6"
-            echo "$all_ips"
-            return 0
-        fi
-
-        echo "Retry $attempt for $domain..." >&2
-        sleep 1
-        attempt=$((attempt + 1))
-    done
-
-    echo "" # Return empty on failure
-    return 1
-}
-
-# Resolve URLs to IPs (for IP-based blocking fallback)
-RESOLVED_IPV4=""
-RESOLVED_IPV6=""
-
+DOMAINS=""
 for url in $URLS; do
     domain=$(echo "$url" | sed -E 's|https?://||' | cut -d/ -f1)
-    echo "Resolving domain: $domain"
-
-    # Get all IPs with retry
-    ips=$(resolve_with_retry "$domain")
-
-    for ip in $ips; do
-        if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            RESOLVED_IPV4="$RESOLVED_IPV4 $ip"
-            echo "  IPv4: $ip"
-        elif [[ "$ip" =~ : ]]; then
-            RESOLVED_IPV6="$RESOLVED_IPV6 $ip"
-            echo "  IPv6: $ip"
-        fi
-    done
+    DOMAINS="$DOMAINS $domain"
 done
-
-ALL_IPV4="$IPS $RESOLVED_IPV4"
-ALL_IPV6="$RESOLVED_IPV6"
-
-echo "All IPv4: $ALL_IPV4"
-echo "All IPv6: $ALL_IPV6"
+echo "Domains from URLs: $DOMAINS"
 
 # ============================================================
 # 3. Configure DNS Sinkhole (dnsmasq)
@@ -133,6 +85,13 @@ log-facility=/var/log/dnsmasq.log
 # Load blocklist/allowlist
 conf-dir=/etc/dnsmasq.d/,*.conf
 
+# Allow rebinding to localhost (needed for Docker DNS 127.0.0.11)
+rebind-localhost-ok
+
+# Don't cache negative (NXDOMAIN) responses
+# This helps with timing issues where Docker DNS may not be ready immediately
+no-negcache
+
 # DO NOT use strict-order - allows fallback to other DNS servers
 # strict-order
 DNSMASQ_CONF
@@ -144,49 +103,84 @@ DNSMASQ_CONF
 if [ "$MODEL" == "black" ]; then
     # ============================================================
     # Blacklist Mode: Block specific domains, allow everything else
+    # URLs are blocked via DNS sinkhole (returns 0.0.0.0)
+    # IPs are blocked via firewall rules
     # ============================================================
     echo "Configuring Blacklist DNS Sinkhole..."
 
-    # Extract domains from URLs and block them via DNS Sinkhole
-    for url in $URLS; do
-        domain=$(echo "$url" | sed -E 's|https?://||' | cut -d/ -f1)
-        echo "Blocking domain from URL: $domain"
+    # Step 1: Map internal container names to their IPs (same as white mode)
+    # Since router is on a different primary network (bridge), Docker DNS (127.0.0.11)
+    # cannot resolve container names in noj-net. We use direct host-record mapping.
+    NAMES_ARRAY=($INTERNAL_NAMES)
+    IPS_ARRAY=($SIDECAR_IPS)
+    
+    echo "Internal names count: ${#NAMES_ARRAY[@]}"
+    echo "Sidecar IPs count: ${#IPS_ARRAY[@]}"
+    
+    for i in "${!NAMES_ARRAY[@]}"; do
+        name="${NAMES_ARRAY[$i]}"
+        ip="${IPS_ARRAY[$i]}"
+        if [ -n "$name" ] && [ -n "$ip" ]; then
+            echo "Mapping internal name '$name' -> $ip"
+            echo "host-record=$name,$ip" >> "$DNSMASQ_ALLOWLIST"
+        fi
+    done
+
+    # Step 2: Block specific domains via DNS Sinkhole
+    for domain in $DOMAINS; do
+        echo "Blocking domain: $domain"
+        # Sinkhole the domain (return 0.0.0.0) - connection will fail
         echo "address=/$domain/0.0.0.0" >> "$DNSMASQ_BLOCKLIST"
         echo "address=/$domain/::" >> "$DNSMASQ_BLOCKLIST"
     done
 
+
 elif [ "$MODEL" == "white" ]; then
     # ============================================================
     # Whitelist Mode: Catch-all blocking with explicit exceptions
+    # Use nftset to dynamically add resolved IPs to firewall whitelist
     # ============================================================
     echo "Configuring Whitelist DNS Sinkhole (catch-all mode)..."
 
-    # Strategy:
-    # 1. Block ALL domains with address=/#/0.0.0.0 (catch-all)
-    # 2. Allow internal container names via server=/name/127.0.0.11
-    # 3. Allow whitelisted domains via server=/domain/8.8.8.8
-    # Note: server= directive overrides address= for specific domains
-
-    # Step 1: Allow internal container names FIRST (more specific rules)
-    # These are resolved by Docker's embedded DNS
-    for name in $INTERNAL_NAMES; do
-        echo "Allowing internal name: $name"
-        echo "server=/$name/127.0.0.11" >> "$DNSMASQ_ALLOWLIST"
+    # Step 1: Map internal container names to their IPs
+    # Since router is on a different primary network (bridge), Docker DNS (127.0.0.11)
+    # cannot resolve container names in noj-net. We use direct host-record mapping.
+    # Convert space-separated lists to arrays
+    NAMES_ARRAY=($INTERNAL_NAMES)
+    IPS_ARRAY=($SIDECAR_IPS)
+    
+    echo "Internal names count: ${#NAMES_ARRAY[@]}"
+    echo "Sidecar IPs count: ${#IPS_ARRAY[@]}"
+    
+    for i in "${!NAMES_ARRAY[@]}"; do
+        name="${NAMES_ARRAY[$i]}"
+        ip="${IPS_ARRAY[$i]}"
+        if [ -n "$name" ] && [ -n "$ip" ]; then
+            echo "Mapping internal name '$name' -> $ip"
+            # Use host-record to directly map name to IP (no upstream DNS query needed)
+            echo "host-record=$name,$ip" >> "$DNSMASQ_ALLOWLIST"
+        fi
     done
 
-    # Step 2: Allow whitelisted external domains
-    for url in $URLS; do
-        domain=$(echo "$url" | sed -E 's|https?://||' | cut -d/ -f1)
-        echo "Allowing domain: $domain"
+
+    # Step 2: Allow whitelisted external domains and add resolved IPs to nftables set
+    # The nftset option adds resolved IPs to the specified nftables set
+    for domain in $DOMAINS; do
+        echo "Allowing domain (with dynamic IP): $domain"
         echo "server=/$domain/8.8.8.8" >> "$DNSMASQ_ALLOWLIST"
         echo "server=/$domain/8.8.4.4" >> "$DNSMASQ_ALLOWLIST"
+        # Add resolved IPs to nftables sets (4 = IPv4, 6 = IPv6)
+        echo "nftset=/$domain/4#inet#filter#url_whitelist_ipv4" >> "$DNSMASQ_ALLOWLIST"
+        echo "nftset=/$domain/6#inet#filter#url_whitelist_ipv6" >> "$DNSMASQ_ALLOWLIST"
     done
 
     # Step 3: Block everything else (catch-all)
-    # This MUST come after the allowlist entries
+    # NOTE: The server= directives above take precedence for their specific domains
+    # address=/#/ is a catch-all for domains that don't have specific server= rules
     echo "address=/#/0.0.0.0" >> "$DNSMASQ_BLOCKLIST"
     echo "address=/#/::" >> "$DNSMASQ_BLOCKLIST"
     echo "Catch-all blocking enabled: all non-whitelisted domains return 0.0.0.0"
+    echo "Dynamic IP whitelisting enabled via nftset"
 fi
 
 echo "DNS Sinkhole blocklist:"
@@ -194,22 +188,10 @@ cat "$DNSMASQ_BLOCKLIST"
 echo "DNS Sinkhole allowlist:"
 cat "$DNSMASQ_ALLOWLIST"
 
-# Start dnsmasq
-echo "Starting dnsmasq..."
-dnsmasq --keep-in-foreground &
-DNSMASQ_PID=$!
-sleep 1
-
-# Verify dnsmasq is running
-if ! kill -0 $DNSMASQ_PID 2>/dev/null; then
-    echo "ERROR: dnsmasq failed to start!"
-    cat /var/log/dnsmasq.log 2>/dev/null || true
-    exit 1
-fi
-echo "dnsmasq started with PID $DNSMASQ_PID"
-
 # ============================================================
 # 4. Apply nftables Firewall Rules (IPv4 + IPv6)
+# IMPORTANT: Create nftables sets BEFORE starting dnsmasq
+# dnsmasq needs the sets to exist to add IPs to them
 # ============================================================
 echo "=== 3. Applying Firewall Rules ==="
 
@@ -218,6 +200,11 @@ nft flush ruleset
 # Create tables
 nft add table inet filter
 nft add table inet nat
+
+# Create sets for dynamic URL IP whitelisting
+# These sets will be populated by dnsmasq when it resolves whitelisted domains
+nft add set inet filter url_whitelist_ipv4 { type ipv4_addr \; flags timeout \; timeout 5m \; }
+nft add set inet filter url_whitelist_ipv6 { type ipv6_addr \; flags timeout \; timeout 5m \; }
 
 # NAT chains
 nft add chain inet nat prerouting { type nat hook prerouting priority -100 \; }
@@ -267,14 +254,10 @@ nft add rule inet filter output ct state established,related accept
 # ============================================================
 if [ "$MODEL" == "white" ]; then
     echo "Configuring Whitelist firewall rules..."
-    echo "  Strategy: DNS sinkhole for URL control, firewall for explicit IPs only"
-    echo "  Note: All port 53 traffic is NAT redirected to dnsmasq (sinkhole)"
+    echo "  Strategy: DNS sinkhole for URL control + dynamic IP whitelisting"
+    echo "  Note: All port 53 traffic is NAT redirected to dnsmasq"
 
-    # ============================================================
-    # 5b. Configure student_out chain (filter table)
-    # ============================================================
-
-    # Allow Sidecar IPs (IPv4 and IPv6)
+    # Allow Sidecar IPs
     for sip in $SIDECAR_IPS; do
         echo "Allow Sidecar: $sip"
         if [[ "$sip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -290,11 +273,10 @@ if [ "$MODEL" == "white" ]; then
     nft add rule inet filter student_out ip6 daddr ::1 udp dport 53 accept
     nft add rule inet filter student_out ip6 daddr ::1 tcp dport 53 accept
 
-    # Allow explicitly whitelisted IPs (from $IPS only, not resolved URLs)
-    # We rely on DNS sinkhole for URL-based control, not IP resolution
+    # Allow explicit IP whitelist (from config)
     for ip in $IPS; do
         if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Allow explicit IP: $ip"
+            echo "Allow explicit IPv4: $ip"
             nft add rule inet filter student_out ip daddr "$ip" accept
         elif [[ "$ip" =~ : ]]; then
             echo "Allow explicit IPv6: $ip"
@@ -302,42 +284,32 @@ if [ "$MODEL" == "white" ]; then
         fi
     done
 
-    # If URL rules exist, allow HTTP/HTTPS ports for whitelisted domains
-    # DNS sinkhole will return 0.0.0.0 for non-whitelisted domains
-    if [ -n "$URLS" ]; then
-        echo "URL whitelist detected: Allowing HTTP/HTTPS ports"
-        echo "  (DNS sinkhole will block non-whitelisted domains)"
-        
-        # Allow common web ports
-        nft add rule inet filter student_out tcp dport 80 accept    # HTTP
-        nft add rule inet filter student_out tcp dport 443 accept   # HTTPS
-        nft add rule inet filter student_out tcp dport 8080 accept  # Alt HTTP
-        nft add rule inet filter student_out tcp dport 8443 accept  # Alt HTTPS
-    fi
+    # Allow IPs from dynamic URL whitelist (populated by dnsmasq nftset)
+    # These IPs are added when dnsmasq resolves whitelisted domains
+    nft add rule inet filter student_out ip daddr @url_whitelist_ipv4 accept
+    nft add rule inet filter student_out ip6 daddr @url_whitelist_ipv6 accept
+    echo "Dynamic URL whitelist rules added (using nftables sets)"
 
     # Reject everything else
     nft add rule inet filter student_out reject
 
 else
     echo "Configuring Blacklist firewall rules..."
+    echo "  Strategy: DNS sinkhole blocks URLs (returns 0.0.0.0)"
+    echo "  Firewall blocks explicit IPs"
 
-    # Block blacklisted IPv4 addresses
-    for ip in $ALL_IPV4; do
+    # Block explicit IP blacklist (from config)
+    for ip in $IPS; do
         if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Block IPv4: $ip"
+            echo "Block explicit IPv4: $ip"
             nft add rule inet filter student_out ip daddr "$ip" reject
-        fi
-    done
-
-    # Block blacklisted IPv6 addresses
-    for ip in $ALL_IPV6; do
-        if [[ "$ip" =~ : ]]; then
-            echo "Block IPv6: $ip"
+        elif [[ "$ip" =~ : ]]; then
+            echo "Block explicit IPv6: $ip"
             nft add rule inet filter student_out ip6 daddr "$ip" reject
         fi
     done
 
-    # Allow everything else
+    # Allow everything else (DNS sinkhole handles URL blocking)
     nft add rule inet filter student_out accept
 fi
 
@@ -345,9 +317,26 @@ echo "=== Firewall Rules Applied ==="
 nft list ruleset
 
 # ============================================================
-# 6. Drop Privileges and Keep Running
+# 6. Start dnsmasq (AFTER nftables sets are created)
 # ============================================================
-echo "=== 4. Dropping Privileges ==="
+echo "=== 4. Starting dnsmasq ==="
+
+dnsmasq --keep-in-foreground &
+DNSMASQ_PID=$!
+sleep 1
+
+# Verify dnsmasq is running
+if ! kill -0 $DNSMASQ_PID 2>/dev/null; then
+    echo "ERROR: dnsmasq failed to start!"
+    cat /var/log/dnsmasq.log 2>/dev/null || true
+    exit 1
+fi
+echo "dnsmasq started with PID $DNSMASQ_PID"
+
+# ============================================================
+# 7. Drop Privileges and Keep Running
+# ============================================================
+echo "=== 5. Dropping Privileges ==="
 
 if ! id -u nobody > /dev/null 2>&1; then
     adduser -D -u 65534 nobody || useradd -u 65534 -U -M -s /bin/false nobody
@@ -357,6 +346,7 @@ echo "Router with DNS Sinkhole is running..."
 echo "  - dnsmasq PID: $DNSMASQ_PID"
 echo "  - Mode: $MODEL"
 echo "  - IPv6: Enabled"
+echo "  - Dynamic IP whitelisting: $([ '$MODEL' == 'white' ] && echo 'Enabled' || echo 'N/A')"
 
 # Wait for dnsmasq (keep container running)
 wait $DNSMASQ_PID

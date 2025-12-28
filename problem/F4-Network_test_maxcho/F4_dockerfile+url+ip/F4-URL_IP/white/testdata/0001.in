@@ -1,0 +1,24 @@
+# Additional DNS-focused tests
+# Testing more DNS providers and popular sites
+
+# Popular DNS providers - should block (not whitelisted)
+IP 8.8.4.4 443 block
+IP 4.2.2.1 443 block
+IP 4.2.2.2 443 block
+
+# CDN and cloud providers - should block
+URL cdn.jsdelivr.net 443 block
+URL ajax.googleapis.com 443 block
+URL fonts.googleapis.com 443 block
+URL unpkg.com 443 block
+
+# Social media - should block
+URL instagram.com 443 block
+URL linkedin.com 443 block
+URL youtube.com 443 block
+URL tiktok.com 443 block
+
+# Tech sites - should block
+URL stackoverflow.com 443 block
+URL medium.com 443 block
+URL dev.to 443 block

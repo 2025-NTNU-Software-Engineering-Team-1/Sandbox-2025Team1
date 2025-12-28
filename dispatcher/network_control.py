@@ -53,7 +53,8 @@ class NetworkController:
 
     def __init__(self,
                  docker_url: str,
-                 submission_dir: Optional[pathlib.Path] = None):
+                 submission_dir: Optional[pathlib.Path] = None,
+                 cleanup_on_init: bool = True):
         self.SUBMISSION_DIR = submission_dir or config.SUBMISSION_DIR
         self.resources: Dict[str, Dict] = {}
         self.docker_url = docker_url
@@ -72,6 +73,97 @@ class NetworkController:
             self.client = None
             self.docker_cli = None
 
+        # Cleanup stale resources from previous runs on initialization
+        if cleanup_on_init and self.client:
+            logger().info("Performing startup cleanup of stale NOJ resources...")
+            self.cleanup_stale_resources()
+
+    def cleanup_stale_resources(self, submission_id: str = None):
+        """
+        Clean up any stale containers and networks left from previous runs.
+        If submission_id is provided, only clean resources for that submission.
+        Otherwise, clean ALL noj-related resources.
+
+        This should be called:
+        1. Before provisioning a new network (with submission_id)
+        2. On startup to clean any orphaned resources (without submission_id)
+        """
+        if not self.client:
+            logger().warning("Docker client not initialized, skipping stale cleanup")
+            return
+
+        logger().info(f"Cleaning up stale resources (submission_id={submission_id})...")
+
+        # Define patterns for containers and networks to clean
+        if submission_id:
+            container_patterns = [
+                f"router-{submission_id}",
+                f"sidecar-{submission_id}-",
+                f"custom-*-{submission_id}",
+            ]
+            network_patterns = [f"noj-net-{submission_id}"]
+        else:
+            # Clean all NOJ-related resources
+            container_patterns = ["router-", "sidecar-", "custom-"]
+            network_patterns = ["noj-net-"]
+
+        # Step 1: Find and remove stale containers
+        stale_containers = []
+        try:
+            all_containers = self.client.containers(all=True)
+            for container in all_containers:
+                names = container.get("Names", [])
+                for name in names:
+                    # Docker names start with "/"
+                    clean_name = name.lstrip("/")
+                    for pattern in container_patterns:
+                        if clean_name.startswith(pattern) or pattern in clean_name:
+                            stale_containers.append(container["Id"])
+                            break
+        except Exception as e:
+            logger().warning(f"Failed to list containers for stale cleanup: {e}")
+
+        # Remove stale containers
+        for cid in stale_containers:
+            try:
+                logger().info(f"Removing stale container: {cid[:12]}")
+                self.client.stop(cid, timeout=2)
+            except Exception:
+                pass  # Container may already be stopped
+            try:
+                self.client.remove_container(cid, v=True, force=True)
+            except Exception as e:
+                logger().warning(f"Failed to remove stale container {cid[:12]}: {e}")
+
+        # Step 2: Find and remove stale networks
+        stale_networks = []
+        try:
+            all_networks = self.client.networks()
+            for network in all_networks:
+                name = network.get("Name", "")
+                for pattern in network_patterns:
+                    if name.startswith(pattern):
+                        stale_networks.append(network["Id"])
+                        break
+        except Exception as e:
+            logger().warning(f"Failed to list networks for stale cleanup: {e}")
+
+        # Remove stale networks
+        for nid in stale_networks:
+            try:
+                logger().info(f"Removing stale network: {nid[:12]}")
+                self.client.remove_network(nid)
+            except Exception as e:
+                logger().warning(f"Failed to remove stale network {nid[:12]}: {e}")
+
+        if stale_containers or stale_networks:
+            logger().info(
+                f"Stale cleanup complete: removed {len(stale_containers)} containers, "
+                f"{len(stale_networks)} networks"
+            )
+        else:
+            logger().debug("No stale resources found")
+
     def provision_network(self, submission_id: str, problem_id: int):
         """
         Main Entry: Fetch Config -> Check/Build Custom Image -> Setup Topology
@@ -81,6 +173,9 @@ class NetworkController:
         )
         if not self.client:
             raise RuntimeError("Docker client not initialized")
+
+        # 0. Cleanup any stale resources from previous runs of this submission
+        self.cleanup_stale_resources(submission_id)
 
         # 1. Fetch Config
         logger().info(f"[{submission_id}] Fetching network config...")
@@ -270,18 +365,30 @@ class NetworkController:
         if external_config:
             ip_rules = external_config.get("ip", [])
             url_rules = external_config.get("url", [])
+            model = external_config.get("model", "White").lower()  # Default: White
+            
             logger().info(
                 f"(*_*)[Router Decision] external_config={external_config}, "
+                f"model={model}, "
                 f"ip_rules={ip_rules} (len={len(ip_rules) if ip_rules else 0}), "
                 f"url_rules={url_rules} (len={len(url_rules) if url_rules else 0})"
             )
+            
             if ip_rules or url_rules:
+                # Has rules: always need router to enforce them
                 need_router = True
                 logger().info(
                     f"(*_*)[Router Decision] need_router=True (has rules)")
-            else:
+            elif model == "black":
+                # Black mode with empty rules: need router to allow all (open network)
+                need_router = True
                 logger().info(
-                    f"(*_*)[Router Decision] need_router=False (no rules)")
+                    f"(*_*)[Router Decision] need_router=True (black mode, allow all)")
+            else:
+                # White mode with empty rules: no router (sandbox default blocks network)
+                need_router = False
+                logger().info(
+                    f"(*_*)[Router Decision] need_router=False (white mode, block all)")
         else:
             logger().info(
                 f"(*_*)[Router Decision] need_router=False (no external_config)"
@@ -396,6 +503,7 @@ class NetworkController:
                 # Wait for router entrypoint to complete firewall setup
                 time.sleep(20)
 
+            # case 2: Router
             elif need_router:
                 logger().debug(
                     f"(*_*)[In _setup_topology] Setting up router-only topology for submission {submission_id}"
@@ -445,6 +553,16 @@ class NetworkController:
                 resource_record["mode"] = net_name
 
             self._wait_for_containers_running(containers_to_wait)
+
+            # Wait for container services (e.g., HTTP servers) to be ready
+            # This delay is applied after containers are in 'running' state
+            # but before student code starts executing
+            if containers_to_wait and config.SERVICE_STARTUP_DELAY > 0:
+                logger().info(
+                    f"Waiting {config.SERVICE_STARTUP_DELAY}s for container services to be ready..."
+                )
+                time.sleep(config.SERVICE_STARTUP_DELAY)
+
             self.resources[submission_id] = resource_record
 
         except Exception as e:
