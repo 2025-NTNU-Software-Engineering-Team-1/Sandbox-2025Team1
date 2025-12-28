@@ -755,7 +755,7 @@ class TestDNSSinkhole:
 
         # Check for URL domain extraction
         assert "URLS" in content
-        assert "Blocking domain from URL" in content
+        assert "Domains from URLs" in content
 
     def test_router_dockerfile_includes_dnsmasq(self):
         """Verify Dockerfile includes dnsmasq package."""
@@ -775,8 +775,8 @@ class TestIPv6Support:
                       "entrypoint.sh")
         content = entrypoint.read_text(encoding="utf-8")
 
-        # Check for AAAA record resolution
-        assert "AAAA" in content
+        # Check for IPv6 listener configuration
+        assert "listen-address=::1" in content
         assert "ipv6" in content.lower() or "IPv6" in content
 
     def test_router_entrypoint_has_ipv6_nftables_rules(self):
@@ -818,26 +818,26 @@ class TestIPv6Support:
         assert "/::" in content or "/::/" in content
 
 
-class TestDNSSinkholeWithRetry:
-    """Tests for DNS resolution retry mechanism."""
+class TestDNSSinkholeResilience:
+    """Tests for DNS sinkhole resilience settings."""
 
-    def test_router_entrypoint_has_retry_mechanism(self):
-        """Verify entrypoint.sh has DNS resolution retry."""
+    def test_router_entrypoint_disables_negative_cache(self):
+        """Verify entrypoint.sh disables negative DNS caching."""
         entrypoint = (Path(__file__).resolve().parents[1] / "network_router" /
                       "entrypoint.sh")
         content = entrypoint.read_text(encoding="utf-8")
 
-        # Check for retry mechanism
-        assert "retry" in content.lower() or "max_attempts" in content
+        # Check for dnsmasq negative cache disablement
+        assert "no-negcache" in content
 
-    def test_router_entrypoint_has_resolve_function(self):
-        """Verify entrypoint.sh has a resolve function with retry."""
+    def test_router_entrypoint_checks_dnsmasq_startup(self):
+        """Verify entrypoint.sh checks dnsmasq startup health."""
         entrypoint = (Path(__file__).resolve().parents[1] / "network_router" /
                       "entrypoint.sh")
         content = entrypoint.read_text(encoding="utf-8")
 
-        # Check for resolve function
-        assert "resolve_with_retry" in content
+        # Check for startup verification
+        assert "dnsmasq failed to start" in content or "kill -0 $DNSMASQ_PID" in content
 
 
 # ============================================================
@@ -983,8 +983,8 @@ class TestInternalNamesWhitelist:
                       "entrypoint.sh")
         content = entrypoint.read_text(encoding="utf-8")
 
-        # Check for internal name allowlist using server= directive
-        assert "server=/$name/127.0.0.11" in content or "server=/$name/" in content
+        # Check for internal name allowlist using host-record mapping
+        assert "host-record=$name,$ip" in content
 
     def test_router_entrypoint_whitelist_allows_domains(self):
         """Verify entrypoint.sh allows whitelisted domains via server= directive."""
@@ -1025,5 +1025,5 @@ class TestWhitelistModeComplete:
         content = entrypoint.read_text(encoding="utf-8")
 
         # In blacklist mode, should block specific domains
-        assert "Blocking domain from URL" in content
+        assert "Blocking domain:" in content
         assert 'address=/$domain/0.0.0.0' in content
