@@ -1,0 +1,19 @@
+{
+    "language": 0,
+    "submissionMode": 0,
+    "executionMode": 2,
+    "buildStrategy": 3,
+    "teacherFirst": true,
+    "assetPaths": {
+        "teacher_file": "interactive-sample/Teacher_file.c",
+        "teacherLang": "c"
+    },
+    "tasks": [
+        {
+            "taskScore": 100,
+            "memoryLimit": 65536,
+            "timeLimit": 2000,
+            "caseCount": 2
+        }
+    ]
+}

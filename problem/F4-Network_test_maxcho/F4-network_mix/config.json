@@ -1,0 +1,37 @@
+{
+    "networkAccessRestriction": {
+        "sidecars": [
+            {
+                "name": "redis-sidecar",
+                "image": "redis:alpine",
+                "env": {},
+                "args": [
+                    "redis-server",
+                    "--requirepass",
+                    "noj_secret_pass"
+                ]
+            },
+            {
+                "name": "secret-server",
+                "image": "busybox",
+                "env": {
+                    "THE_SECRET": "verify_env_args_success"
+                },
+                "args": [
+                    "sh",
+                    "-c",
+                    "mkdir -p /www && echo $THE_SECRET > /www/index.html && httpd -f -p 8080 -h /www"
+                ]
+            }
+        ],
+        "external": {
+            "model": "White",
+            "ip": [
+                "1.1.1.1"
+            ],
+            "url": [
+                "www.google.com"
+            ]
+        }
+    }
+}

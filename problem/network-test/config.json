@@ -1,0 +1,47 @@
+{
+  "problem_name": "HTTP 客戶端練習題",
+  "description": "請撰寫一個程式，連接到本地 HTTP 伺服器，發送 HTTP GET 請求並輸出回應內容。",
+  "tags": ["network", "http", "api"],
+  "test_case": {
+    "tasks": [
+      {
+        "caseCount": 3,
+        "taskScore": 100,
+        "memoryLimit": 65536,
+        "timeLimit": 2000
+      }
+    ]
+  },
+  "config": {
+    "submissionMode": 0,
+    "executionMode": "general",
+    "allowedLanguage": [1, 2],
+    "canViewStdout": true,
+    "networkAccessRestriction": {
+      "enabled": true,
+      "firewallExtranet": {
+        "mode": "whitelist",
+        "rules": []
+      },
+      "connectWithLocal": {
+        "mode": "whitelist",
+        "rules": [
+          {
+            "type": "ip",
+            "value": "127.0.0.1",
+            "action": "allow"
+          },
+          {
+            "type": "port",
+            "value": "8080",
+            "action": "allow"
+          }
+        ]
+      }
+    }
+  },
+  "asset_paths": {
+    "testdata": "problems/network-test/testdata.zip",
+    "local_service": "problems/network-test/local_service.zip"
+  }
+}

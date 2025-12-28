@@ -16,3 +16,15 @@ class Execute:
     submission_id: str
     task_id: int
     case_id: int
+
+
+@dataclass
+class StaticAnalysis:
+    submission_id: str
+    problem_id: int
+
+
+@dataclass
+class NetworkSetup:
+    submission_id: str
+    problem_id: int

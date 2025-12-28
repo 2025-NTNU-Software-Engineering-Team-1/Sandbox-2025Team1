@@ -1,0 +1,2 @@
+# Test: Echo service with custom message
+DOCKER env-echo 9000 Hello from Echo Service!

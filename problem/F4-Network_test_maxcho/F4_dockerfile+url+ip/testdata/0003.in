@@ -1,0 +1,24 @@
+# Mixed test - Docker + external with more DNS providers and sites
+
+# Docker containers
+DOCKER env-python 8000 Hello from Server Container!
+DOCKER env-cpp 8080 Hello from C++ File!
+
+# More DNS provider IPs (not whitelisted)
+IP 8.8.4.4 443 block
+IP 4.2.2.1 443 block
+IP 4.2.2.2 443 block
+IP 185.228.168.168 443 block
+
+# CDN/Cloud sites (not whitelisted)
+URL cdn.jsdelivr.net 443 block
+URL unpkg.com 443 block
+
+# Social media (not whitelisted)
+URL instagram.com 443 block
+URL linkedin.com 443 block
+URL youtube.com 443 block
+
+# Verify whitelisted still works
+IP 1.1.1.1 443 connect
+URL www.google.com 443 connect

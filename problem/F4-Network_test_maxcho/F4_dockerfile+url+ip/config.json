@@ -1,0 +1,35 @@
+{
+    "networkAccessRestriction": {
+        "sidecars": [
+            {
+                "name": "env-python",
+                "port": 8000
+            },
+            {
+                "name": "env-cpp",
+                "port": 8080
+            },
+            {
+                "name": "env-echo",
+                "port": 9000
+            },
+            {
+                "name": "env-calc",
+                "port": 9001
+            },
+            {
+                "name": "env-api",
+                "port": 9002
+            }
+        ],
+        "external": {
+            "model": "White",
+            "ip": [
+                "1.1.1.1"
+            ],
+            "url": [
+                "https://www.google.com"
+            ]
+        }
+    }
+}

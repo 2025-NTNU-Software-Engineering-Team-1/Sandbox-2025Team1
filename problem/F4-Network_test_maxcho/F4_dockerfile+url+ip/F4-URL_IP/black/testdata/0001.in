@@ -1,0 +1,23 @@
+# Additional BLACKLIST tests
+# These sites should all connect (not blacklisted)
+
+# CDN and cloud providers - should connect
+URL cdn.jsdelivr.net 443 connect
+URL ajax.googleapis.com 443 connect
+URL unpkg.com 443 connect
+
+# Social media - should connect
+URL instagram.com 443 connect
+URL linkedin.com 443 connect
+URL youtube.com 443 connect
+
+# Tech sites - should connect
+URL stackoverflow.com 443 connect
+URL medium.com 443 connect
+URL pypi.org 443 connect
+URL npmjs.com 443 connect
+
+# More DNS IPs - should connect (not blacklisted)
+IP 8.8.4.4 443 connect
+IP 4.2.2.1 443 connect
+IP 4.2.2.2 443 connect

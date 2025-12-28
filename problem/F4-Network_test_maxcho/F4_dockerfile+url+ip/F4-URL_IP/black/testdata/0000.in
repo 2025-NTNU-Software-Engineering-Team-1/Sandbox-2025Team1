@@ -1,0 +1,29 @@
+# Comprehensive IP/URL tests for BLACKLIST mode
+# Expected: Blacklist blocks 1.1.1.1 and www.google.com, allows everything else
+
+# Blacklisted IP tests - should block
+IP 1.1.1.1 443 block
+IP 1.1.1.1 80 block
+
+# Non-blacklisted IP tests - should connect
+IP 8.8.8.8 443 connect
+IP 9.9.9.9 443 connect
+IP 208.67.222.222 443 connect
+IP 1.0.0.1 443 connect
+IP 76.76.2.0 443 connect
+IP 94.140.14.14 443 connect
+IP 185.228.168.168 443 connect
+
+# Blacklisted URL tests - should block
+URL www.google.com 443 block
+URL www.google.com 80 block
+
+# Non-blacklisted URL tests - should connect
+URL github.com 443 connect
+URL facebook.com 443 connect
+URL amazon.com 443 connect
+URL twitter.com 443 connect
+URL cloudflare.com 443 connect
+URL microsoft.com 443 connect
+URL apple.com 443 connect
+URL reddit.com 443 connect

@@ -1,0 +1,2 @@
+# Test: Calculator service API
+DOCKER env-calc 9001 endpoints
