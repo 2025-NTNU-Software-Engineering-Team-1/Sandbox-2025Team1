@@ -25,9 +25,13 @@
             }
         ],
         "external": {
-            "model": "Black",
-            "ip": [],
-            "url": []
+            "model": "White",
+            "ip": [
+                "1.1.1.1"
+            ],
+            "url": [
+                "www.google.com"
+            ]
         }
     }
 }

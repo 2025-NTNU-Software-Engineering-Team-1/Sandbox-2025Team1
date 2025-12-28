@@ -77,6 +77,9 @@ SIDECAR_MEM_LIMIT = os.getenv('SIDECAR_MEM_LIMIT', '512m')
 SIDECAR_CPU_PERIOD = int(os.getenv('SIDECAR_CPU_PERIOD', '100000'))
 SIDECAR_CPU_QUOTA = int(os.getenv('SIDECAR_CPU_QUOTA', '50000'))
 SIDECAR_PIDS_LIMIT = int(os.getenv('SIDECAR_PIDS_LIMIT', '100'))
+# Delay (in seconds) to wait for container services (e.g., HTTP servers) to be ready
+# after the container is in 'running' state
+SERVICE_STARTUP_DELAY = float(os.getenv('SERVICE_STARTUP_DELAY', '2.0'))
 
 # ============================================================
 # Docker Image Security Configuration
