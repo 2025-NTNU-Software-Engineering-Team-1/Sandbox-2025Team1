@@ -22,3 +22,4 @@ docker build -t noj-system-router:latest system_router/ --no-cache
 # create submissions folder
 mkdir -p submissions
 echo -e "\033[31mReplace working_dir in .config/submission.json with '$(pwd)/submissions'.\033[0m"
+echo -e "\033[31mReplace host_root.  in .config/submission.json with '$(pwd)'.\033[0m"
