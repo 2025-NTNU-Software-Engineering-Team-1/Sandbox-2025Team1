@@ -2,7 +2,6 @@ import json
 import logging
 import tarfile
 import tempfile
-import os
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Optional
@@ -36,10 +35,8 @@ class Sandbox:
         lang_id: str,
         compile_need: bool,
         stdin_path: Optional[str] = None,
-        allow_write: bool = False,
-        network_mode: str = "none",
     ):
-        with open(".config/submission.json") as f:
+        with open('.config/submission.json') as f:
             config = json.load(f)
         self.time_limit = time_limit
         self.mem_limit = mem_limit
@@ -48,110 +45,63 @@ class Sandbox:
         self.stdin_path = stdin_path
         self.lang_id = lang_id
         self.compile_need = compile_need
-        self.allow_write = allow_write
-        self.network_mode = network_mode
-        self.client = docker.APIClient(base_url=config["docker_url"])
+        self.client = docker.APIClient(base_url=config['docker_url'])
 
     def run(self):
         # docker container settings
-        stdin_path = "/dev/null" if not self.stdin_path else "/testdata/in"
-        if self.network_mode != "none":
-            allow_network_access = 1
-        else:
-            allow_network_access = 0
-        command_sandbox = " ".join(
+        stdin_path = '/dev/null' if not self.stdin_path else '/testdata/in'
+        command_sandbox = ' '.join(
             map(
                 str,
                 (
-                    "sandbox",
+                    'sandbox',
                     self.lang_id,
                     int(self.compile_need),
                     stdin_path,
-                    "/result/stdout",
-                    "/result/stderr",
+                    '/result/stdout',
+                    '/result/stderr',
                     self.time_limit,
                     self.mem_limit,
                     '1',
                     '1073741824',  # 1 GB output limit
                     '10',  # 10 process
-                    allow_network_access,
                     '/result/result',
                 ),
             ))
-
-        # Bind mounts set - 只在 stdin_path 存在時加入
         volume = {
             self.src_dir: {
-                "bind": "/src",
-                "mode": "rw"
+                'bind': '/src',
+                'mode': 'rw'
             },
+            self.stdin_path: {
+                'bind': '/testdata/in',
+                'mode': 'ro'
+            }
         }
-        binds = {
-            self.src_dir: {
-                "bind": "/src",
-                "mode": "rw"
-            },
-        }
-        if self.stdin_path:
-            volume[self.stdin_path] = {"bind": "/testdata/in", "mode": "ro"}
-            binds[self.stdin_path] = {"bind": "/testdata/in", "mode": "ro"}
-
-        container_working_dir = "/src"
-
-        # network settings
-        # network_mode can be:
-        # - "none": disable network
-        # - "container:xxx": share network namespace with another container (router mode)
-        # - "noj-net-xxx": user-defined bridge network name (sidecar-only mode)
-        is_net_disabled = self.network_mode == "none"
-        is_container_mode = self.network_mode.startswith("container:")
-        is_network_name = not is_net_disabled and not is_container_mode and self.network_mode != "none"
-
-        logging.info(
-            f"[Sandbox] network_mode={self.network_mode}, is_net_disabled={is_net_disabled}, is_container_mode={is_container_mode}, is_network_name={is_network_name}"
-        )
-
-        # Build host_config
-        if is_container_mode:
-            # Share network with router container
-            host_config = self.client.create_host_config(
-                binds=binds,
-                network_mode=self.network_mode,
-            )
-            networking_config = None
-        elif is_network_name:
-            # Connect to user-defined bridge network (for sidecar-only mode)
-            # Must use networking_config, NOT network_mode
-            host_config = self.client.create_host_config(
-                binds=binds,
-                network_mode=self.network_mode,  # network name as network_mode
-            )
-            # Create networking config with aliases for DNS resolution
-            networking_config = self.client.create_networking_config(
-                {self.network_mode: self.client.create_endpoint_config()})
-        else:
-            # No network or default
-            host_config = self.client.create_host_config(
-                binds=binds,
-                network_mode=None,
-            )
-            networking_config = None
+        container_working_dir = '/src'
+        host_config = self.client.create_host_config(
+            binds={
+                self.src_dir: {
+                    'bind': '/src',
+                    'mode': 'rw'
+                },
+                self.stdin_path: {
+                    'bind': '/testdata/in',
+                    'mode': 'ro'
+                }
+            })
 
         container = self.client.create_container(
             image=self.image,
             command=command_sandbox,
             volumes=volume,
-            network_disabled=is_net_disabled,
+            network_disabled=True,
             working_dir=container_working_dir,
             host_config=host_config,
-            networking_config=networking_config,
-            environment={"SANDBOX_ALLOW_WRITE": "1"}
-            if self.allow_write else None,
         )
-
-        if container.get("Warning"):
-            docker_msg = container.get("Warning")
-            logging.warning(f"Warning: {docker_msg}")
+        if container.get('Warning'):
+            docker_msg = container.get('Warning')
+            logging.warning(f'Warning: {docker_msg}')
         # start and wait container
         self.client.start(container)
         try:
@@ -167,18 +117,18 @@ class Sandbox:
         try:
             result = self.get(
                 container=container,
-                path="/result/",
-                filename="result",
-            ).split("\n")
+                path='/result/',
+                filename='result',
+            ).split('\n')
             stdout = self.get(
                 container=container,
-                path="/result/",
-                filename="stdout",
+                path='/result/',
+                filename='stdout',
             )
             stderr = self.get(
                 container=container,
-                path="/result/",
-                filename="stderr",
+                path='/result/',
+                filename='stderr',
             )
         except Exception as e:
             self.client.remove_container(container, v=True, force=True)
@@ -193,20 +143,20 @@ class Sandbox:
             Stdout=stdout,
             Stderr=stderr,
             ExitMsg=result[1],
-            DockerError=exit_status.get("Error", ""),
-            DockerExitCode=exit_status["StatusCode"],
+            DockerError=exit_status.get('Error', ''),
+            DockerExitCode=exit_status['StatusCode'],
         )
 
     def get(self, container, path, filename):
-        bits, _ = self.client.get_archive(container, f"{path}{filename}")
-        tarbits = b"".join(bits)
+        bits, _ = self.client.get_archive(container, f'{path}{filename}')
+        tarbits = b''.join(bits)
         tar = tarfile.open(fileobj=BytesIO(tarbits))
         with tempfile.TemporaryDirectory() as extract_path:
             tar.extract(filename, extract_path)
             with open(
-                    f"{extract_path}/{filename}",
-                    "r",
-                    errors="ignore",
+                    f'{extract_path}/{filename}',
+                    'r',
+                    errors='ignore',
             ) as f:
                 contents = f.read()
         return contents

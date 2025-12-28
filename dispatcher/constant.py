@@ -1,4 +1,4 @@
-from enum import IntEnum, Enum
+from enum import IntEnum
 
 
 class Language(IntEnum):
@@ -8,15 +8,8 @@ class Language(IntEnum):
 
 
 class SubmissionMode(IntEnum):
-    """Deprecated: Use AcceptedFormat instead."""
     CODE = 0
     ZIP = 1
-
-
-class AcceptedFormat(str, Enum):
-    """Single source of truth for submission format."""
-    CODE = "code"
-    ZIP = "zip"
 
 
 class ExecutionMode(IntEnum):

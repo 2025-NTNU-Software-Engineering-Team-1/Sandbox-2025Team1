@@ -1,2 +1,0 @@
-# Local Service 依賴（目前不需要額外依賴）
-# Python 標準庫已包含 http.server

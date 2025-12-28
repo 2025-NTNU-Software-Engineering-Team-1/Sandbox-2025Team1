@@ -1,19 +1,14 @@
 {
-    "working_dir": "",
-    "sandbox_root": "/app",
-    "host_root": "",
-    "docker_url": "unix://var/run/docker.sock",
-    "lang_id": {
-        "c11": 0,
-        "cpp17": 1,
-        "python3": 2
-    },
-    "image": {
-        "c11": "noj-c-cpp",
-        "cpp17": "noj-c-cpp",
-        "python3": "noj-py3"
-    },
-    "interactive_image": "noj-interactive",
-    "custom_checker_image": "noj-custom-checker-scorer",
-    "custom_scorer_image": "noj-custom-checker-scorer"
+	"working_dir": "",
+	"docker_url": "unix://var/run/docker.sock",
+	"lang_id": {
+		"c11": 0,
+		"cpp17": 1,
+		"python3": 2
+	},
+	"image": {
+		"c11": "noj-c-cpp",
+		"cpp17": "noj-c-cpp",
+		"python3": "noj-py3"
+	}
 }
