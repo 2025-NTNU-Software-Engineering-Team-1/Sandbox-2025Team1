@@ -52,7 +52,6 @@ int main() {
     vector<int> data = {3, 1, 4, 1, 5};
     string operation = "sum";
     long long result = compute_result(operation, data);
-    cout << result << "
-";
+    cout << result << "\n";
     return 0;
 }

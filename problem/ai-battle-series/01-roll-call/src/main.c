@@ -5,6 +5,7 @@
 typedef struct {
     char name[32];
     int priority;
+    int order;
 } Record;
 
 static int cmp_by_name(const void *a, const void *b) {
@@ -14,16 +15,29 @@ static int cmp_by_name(const void *a, const void *b) {
     if (cmp != 0) {
         return cmp;
     }
-    return rb->priority - ra->priority;
+    if (ra->priority != rb->priority) {
+        return (ra->priority < rb->priority) ? 1 : -1;
+    }
+    if (ra->order != rb->order) {
+        return (ra->order > rb->order) ? 1 : -1;
+    }
+    return 0;
 }
 
 static int cmp_by_priority(const void *a, const void *b) {
     const Record *ra = (const Record *)a;
     const Record *rb = (const Record *)b;
     if (ra->priority != rb->priority) {
-        return rb->priority - ra->priority;
+        return (ra->priority < rb->priority) ? 1 : -1;
     }
-    return strcmp(ra->name, rb->name);
+    int cmp = strcmp(ra->name, rb->name);
+    if (cmp != 0) {
+        return cmp;
+    }
+    if (ra->order != rb->order) {
+        return (ra->order > rb->order) ? 1 : -1;
+    }
+    return 0;
 }
 
 int main(void) {
@@ -42,6 +56,7 @@ int main(void) {
 
     for (int i = 0; i < n; i++) {
         scanf("%31s %d", records[i].name, &records[i].priority);
+        records[i].order = i;
     }
 
     qsort(records, n, sizeof(Record), cmp_by_name);
@@ -62,8 +77,7 @@ int main(void) {
     qsort(unique, count, sizeof(Record), cmp_by_priority);
 
     for (int i = 0; i < count; i++) {
-        printf("%s
-", unique[i].name);
+        printf("%s\n", unique[i].name);
     }
 
     free(records);

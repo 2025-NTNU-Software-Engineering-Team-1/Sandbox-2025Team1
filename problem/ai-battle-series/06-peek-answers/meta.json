@@ -1,0 +1,33 @@
+{
+    "language": 0,
+    "tasks": [
+        {
+            "taskScore": 100,
+            "memoryLimit": 65536,
+            "timeLimit": 3000,
+            "caseCount": 5
+        }
+    ],
+    "submissionMode": 0,
+    "executionMode": 0,
+    "buildStrategy": 0,
+    "assetPaths": {
+        "network_dockerfile": "network_dockerfile.zip"
+    },
+    "teacherFirst": false,
+    "networkAccessRestriction": {
+        "enabled": true,
+        "external": {
+            "model": "White",
+            "ip": [],
+            "url": []
+        },
+        "sidecars": [],
+        "custom_env": {
+            "enabled": true,
+            "env_list": [
+                "local_service"
+            ]
+        }
+    }
+}

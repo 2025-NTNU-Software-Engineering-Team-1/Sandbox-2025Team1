@@ -25,7 +25,6 @@ int main() {
         }
     }
 
-    cout << tails.size() << "
-";
+    cout << tails.size() << "\n";
     return 0;
 }

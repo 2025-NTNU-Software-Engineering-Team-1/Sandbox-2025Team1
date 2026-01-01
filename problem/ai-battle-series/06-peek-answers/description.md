@@ -110,7 +110,7 @@ Opus 嘆氣：「好吧，讓我仔細思考一下 HTTP 協議和合併排序的
 ### API 端點
 
 ```
-GET http://localhost:8080/api/answers?page={page_number}
+GET http://local_service:8080/api/answers?page={page_number}
 ```
 
 **回應格式（JSON）：**
@@ -142,7 +142,7 @@ GET http://localhost:8080/api/answers?page={page_number}
 
 本題使用 **Network Control** 功能：
 - 白名單模式（Whitelist）
-- 僅允許連接 `127.0.0.1:8080`
+- 僅允許連接 `local_service:8080`
 - 其他所有網路連線都會被阻擋
 
 ## 輸入格式
@@ -226,7 +226,7 @@ import json
 import heapq
 
 def fetch_page(page):
-    url = f"http://localhost:8080/api/answers?page={page}"
+    url = f"http://local_service:8080/api/answers?page={page}"
     with urllib.request.urlopen(url) as response:
         return json.loads(response.read().decode())
 
@@ -344,7 +344,7 @@ vector<int> k_way_merge(vector<vector<pair<int,int>>>& lists) {
 本題使用 **Network Control** 功能模擬受限的網路環境：
 
 1. **白名單模式**：只有指定的 IP 和 Port 可以連線
-2. **本地服務**：系統會在 localhost:8080 運行一個 HTTP 服務
+2. **本地服務**：系統會在 `local_service:8080` 運行一個 HTTP 服務
 3. **沙盒隔離**：你的程式無法連接到外部網路
 
 這模擬了真實世界中的：

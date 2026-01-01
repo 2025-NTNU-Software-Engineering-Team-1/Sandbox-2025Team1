@@ -56,8 +56,7 @@ int main(void) {
         }
     }
 
-    putchar('
-');
+    putchar('\n');
     free(row);
     fclose(fp);
     return 0;

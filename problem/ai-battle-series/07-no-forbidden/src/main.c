@@ -90,8 +90,7 @@ int main(void) {
         }
         printf("%d", arr[i].value);
     }
-    printf("
-");
+    printf("\n");
 
     free(arr);
     free(tmp);

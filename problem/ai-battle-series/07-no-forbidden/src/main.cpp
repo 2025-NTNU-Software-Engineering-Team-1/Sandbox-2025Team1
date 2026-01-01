@@ -89,7 +89,6 @@ int main() {
         }
         cout << arr[i].value;
     }
-    cout << '
-';
+    cout << ' ';
     return 0;
 }

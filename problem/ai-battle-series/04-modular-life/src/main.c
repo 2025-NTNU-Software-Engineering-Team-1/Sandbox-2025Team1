@@ -1,5 +1,3 @@
-#include <math.h>
-
 double calculate_weighted_gpa(int scores[], int credits[], int n) {
     long long sum = 0;
     long long credit_sum = 0;
@@ -14,6 +12,9 @@ double calculate_weighted_gpa(int scores[], int credits[], int n) {
 }
 
 int calculate_percentile_rank(int all_scores[], int n, int my_score) {
+    if (n <= 0) {
+        return 0;
+    }
     int less = 0;
     int equal = 0;
     for (int i = 0; i < n; i++) {
@@ -23,10 +24,9 @@ int calculate_percentile_rank(int all_scores[], int n, int my_score) {
             equal++;
         }
     }
-    double wins = less + (equal > 0 ? (equal - 1) / 2.0 : 0.0);
+    double wins = less + (equal > 0 ? (equal - 1) * 0.5 : 0.0);
     double pr = wins * 100.0 / (double)n;
-    int result = (int)(pr + 0.5);
-    return result;
+    return (int)(pr + 0.5);
 }
 
 double score_to_gpa_points(int score) {
@@ -45,7 +45,9 @@ double score_to_gpa_points(int score) {
 
 int check_graduation(double gpa, int total_credits, int required_credits,
                      int failed_subjects, int max_failed) {
-    if (gpa >= 3.8 && total_credits >= required_credits * 1.1 - 1e-9 && failed_subjects == 0) {
+    long long credit_lhs = (long long)total_credits * 10;
+    long long credit_rhs = (long long)required_credits * 11;
+    if (gpa >= 3.8 && credit_lhs >= credit_rhs && failed_subjects == 0) {
         return 2;
     }
     if (total_credits >= required_credits && failed_subjects <= max_failed) {

@@ -5,11 +5,14 @@ def calculate_weighted_gpa(scores, credits):
 
 
 def calculate_percentile_rank(all_scores, my_score):
+    n = len(all_scores)
+    if n == 0:
+        return 0
     less = sum(1 for s in all_scores if s < my_score)
     equal = sum(1 for s in all_scores if s == my_score)
-    wins = less + (equal - 1) / 2.0 if equal > 0 else less
-    pr = wins * 100.0 / len(all_scores)
-    return int(round(pr))
+    wins = less + (equal - 1) * 0.5 if equal > 0 else less
+    pr = wins * 100.0 / n
+    return int(pr + 0.5)
 
 
 def score_to_gpa_points(score):
@@ -38,7 +41,8 @@ def score_to_gpa_points(score):
 
 def check_graduation(gpa, total_credits, required_credits, failed_subjects,
                      max_failed):
-    if gpa >= 3.8 and total_credits >= required_credits * 1.1 - 1e-9 and failed_subjects == 0:
+    if (gpa >= 3.8 and total_credits * 10 >= required_credits * 11
+            and failed_subjects == 0):
         return 2
     if total_credits >= required_credits and failed_subjects <= max_failed:
         return 1

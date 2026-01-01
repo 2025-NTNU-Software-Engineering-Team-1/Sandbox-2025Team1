@@ -220,16 +220,11 @@ int main() {
     }
 
     string diff_summary =
-        "Differential Backup Report
-"
-        "Added: " + to_string(added) + "
-" +
-        "Deleted: " + to_string(deleted) + "
-" +
-        "Modified: " + to_string(modified) + "
-" +
-        "Unchanged: " + to_string(unchanged) + "
-";
+        string("Differential Backup Report\n") +
+        "Added: " + to_string(added) + "\n" +
+        "Deleted: " + to_string(deleted) + "\n" +
+        "Modified: " + to_string(modified) + "\n" +
+        "Unchanged: " + to_string(unchanged) + "\n";
 
     ofstream summary_file("diff_summary.txt");
     summary_file << diff_summary;
@@ -237,39 +232,23 @@ int main() {
     string md5 = md5_hex(diff_summary);
 
     ofstream report("diff_report.json");
-    report << "{
-";
-    report << "  "changes": {
-";
-    report << "    "added": " << added << ",
-";
-    report << "    "deleted": " << deleted << ",
-";
-    report << "    "modified": " << modified << ",
-";
-    report << "    "unchanged": " << unchanged << "
-";
-    report << "  },
-";
-    report << "  "statistics": {
-";
-    report << "    "old_total_size": " << old_size << ",
-";
-    report << "    "new_total_size": " << new_size << ",
-";
-    report << "    "size_diff": " << (new_size - old_size) << "
-";
-    report << "  }
-";
-    report << "}
-";
+    report << "{\n";
+    report << "  \"changes\": {\n";
+    report << "    \"added\": " << added << ",\n";
+    report << "    \"deleted\": " << deleted << ",\n";
+    report << "    \"modified\": " << modified << ",\n";
+    report << "    \"unchanged\": " << unchanged << "\n";
+    report << "  },\n";
+    report << "  \"statistics\": {\n";
+    report << "    \"old_total_size\": " << old_size << ",\n";
+    report << "    \"new_total_size\": " << new_size << ",\n";
+    report << "    \"size_diff\": " << (new_size - old_size) << "\n";
+    report << "  }\n";
+    report << "}\n";
 
-    cout << "Differential backup completed!
-";
+    cout << "Differential backup completed!\n";
     cout << "Added: " << added << ", Deleted: " << deleted
-         << ", Modified: " << modified << ", Unchanged: " << unchanged << "
-";
-    cout << "Report MD5: " << md5 << "
-";
+         << ", Modified: " << modified << ", Unchanged: " << unchanged << "\n";
+    cout << "Report MD5: " << md5 << "\n";
     return 0;
 }

@@ -30,8 +30,7 @@ int main() {
         double sum_score = prefix_score[r] - prefix_score[l - 1];
         double sum_weight = prefix_weight[r] - prefix_weight[l - 1];
         double avg = sum_weight != 0.0 ? sum_score / sum_weight : 0.0;
-        cout << avg << "
-";
+        cout << avg << "\n";
     }
     return 0;
 }

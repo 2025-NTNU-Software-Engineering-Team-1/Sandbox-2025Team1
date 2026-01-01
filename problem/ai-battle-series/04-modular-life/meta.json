@@ -1,0 +1,37 @@
+{
+    "language": 0,
+    "tasks": [
+        {
+            "taskScore": 25,
+            "memoryLimit": 65536,
+            "timeLimit": 1000,
+            "caseCount": 2
+        },
+        {
+            "taskScore": 25,
+            "memoryLimit": 65536,
+            "timeLimit": 1000,
+            "caseCount": 2
+        },
+        {
+            "taskScore": 25,
+            "memoryLimit": 65536,
+            "timeLimit": 1000,
+            "caseCount": 2
+        },
+        {
+            "taskScore": 25,
+            "memoryLimit": 65536,
+            "timeLimit": 1000,
+            "caseCount": 2
+        }
+    ],
+    "submissionMode": 0,
+    "executionMode": 1,
+    "buildStrategy": 2,
+    "assetPaths": {
+        "makefile": "assets/makefile.zip"
+    },
+    "teacherFirst": false,
+    "networkAccessRestriction": null
+}

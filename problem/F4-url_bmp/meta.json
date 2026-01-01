@@ -1,0 +1,32 @@
+{
+    "language": 2,
+    "tasks": [
+        {
+            "taskScore": 100,
+            "memoryLimit": 65536,
+            "timeLimit": 5000,
+            "caseCount": 1
+        }
+    ],
+    "acceptedFormat": "code",
+    "executionMode": 0,
+    "buildStrategy": 0,
+    "customChecker": true,
+    "resourceData": true,
+    "resourceDataTeacher": true,
+    "assetPaths": {
+        "resource_data": "resource_data.zip",
+        "resource_data_teacher": "resource_data_teacher.zip",
+        "checker": "custom_checker.py"
+    },
+    "networkAccessRestriction": {
+        "enabled": true,
+        "external": {
+            "model": "White",
+            "ip": [],
+            "url": [
+                "https://raw.githubusercontent.com"
+            ]
+        }
+    }
+}

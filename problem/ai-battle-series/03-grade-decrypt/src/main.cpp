@@ -10,8 +10,7 @@ int main() {
         return 0;
     }
     if (k <= 0) {
-        cout << 0 << "
-";
+        cout << 0 << "\n";
         return 0;
     }
 
@@ -31,8 +30,7 @@ int main() {
 
     ifstream fin("grades.csv");
     if (!fin) {
-        cout << 0 << "
-";
+        cout << 0 << "\n";
         return 0;
     }
 
@@ -75,11 +73,9 @@ int main() {
     }
 
     sort(result.begin(), result.end());
-    cout << result.size() << "
-";
+    cout << result.size() << "\n";
     for (const auto &student : result) {
-        cout << student << "
-";
+        cout << student << "\n";
     }
     return 0;
 }

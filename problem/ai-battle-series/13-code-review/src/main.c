@@ -74,18 +74,12 @@ int main(void) {
         percentile = lower + d * (upper - lower);
     }
 
-    printf("Max: %lld
-", max_val);
-    printf("Min: %lld
-", min_val);
-    printf("Mean: %.2Lf
-", mean);
-    printf("Median: %.2Lf
-", median);
-    printf("StdDev: %.2Lf
-", stddev);
-    printf("P%d: %.2Lf
-", p, percentile);
+    printf("Max: %lld\n", max_val);
+    printf("Min: %lld\n", min_val);
+    printf("Mean: %.2Lf\n", mean);
+    printf("Median: %.2Lf\n", median);
+    printf("StdDev: %.2Lf\n", stddev);
+    printf("P%d: %.2Lf\n", p, percentile);
 
     free(nums);
     free(sorted);

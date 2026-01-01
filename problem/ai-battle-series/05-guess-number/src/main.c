@@ -12,8 +12,7 @@ int main(void) {
 
     while (low <= high) {
         int mid = low + (high - low) / 2;
-        printf("guess %d
-", mid);
+        printf("guess %d\n", mid);
         fflush(stdout);
         if (scanf("%15s", response) != 1) {
             return 0;

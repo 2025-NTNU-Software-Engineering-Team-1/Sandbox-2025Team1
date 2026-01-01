@@ -54,17 +54,11 @@ int main() {
 
     cout.setf(ios::fixed);
     cout << setprecision(2);
-    cout << "Max: " << max_val << "
-";
-    cout << "Min: " << min_val << "
-";
-    cout << "Mean: " << mean << "
-";
-    cout << "Median: " << median << "
-";
-    cout << "StdDev: " << stddev << "
-";
-    cout << "P" << p << ": " << percentile << "
-";
+    cout << "Max: " << max_val << "\n";
+    cout << "Min: " << min_val << "\n";
+    cout << "Mean: " << mean << "\n";
+    cout << "Median: " << median << "\n";
+    cout << "StdDev: " << stddev << "\n";
+    cout << "P" << p << ": " << percentile << "\n";
     return 0;
 }

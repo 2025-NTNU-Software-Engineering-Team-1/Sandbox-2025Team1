@@ -37,8 +37,7 @@ int main(void) {
 
     while (low <= high) {
         int mid = low + (high - low) / 2;
-        printf("guess %d
-", mid);
+        printf("guess %d\n", mid);
         fflush(stdout);
         if (scanf("%15s", response) != 1) {
             return 0;
@@ -58,7 +57,6 @@ int main(void) {
     int data[] = {3, 1, 4, 1, 5};
     const char *operation = "sum";
     int result = compute_result(operation, data, 5);
-    printf("%d
-", result);
+    printf("%d\n", result);
     return 0;
 }

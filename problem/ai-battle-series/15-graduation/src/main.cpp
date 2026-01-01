@@ -40,18 +40,12 @@ static void write_certificate(const string &student_id, const string &name,
     if (!fout) {
         return;
     }
-    fout << "GRADUATION CERTIFICATE
-";
-    fout << "Student ID: " << student_id << "
-";
-    fout << "Name: " << name << "
-";
-    fout << "Department: " << department << "
-";
-    fout << "GPA: " << fixed << setprecision(2) << gpa << "
-";
-    fout << "Graduation Year: " << year << "
-";
+    fout << "GRADUATION CERTIFICATE\n";
+    fout << "Student ID: " << student_id << "\n";
+    fout << "Name: " << name << "\n";
+    fout << "Department: " << department << "\n";
+    fout << "GPA: " << fixed << setprecision(2) << gpa << "\n";
+    fout << "Graduation Year: " << year << "\n";
 }
 
 int main() {
@@ -85,7 +79,6 @@ int main() {
     double gpa = compute_gpa("transcript.csv");
     write_certificate("B12345678", "王小明", "資訊工程學系", 2024, gpa);
     cout.setf(ios::fixed);
-    cout << setprecision(6) << "GPA: " << gpa << "
-";
+    cout << setprecision(6) << "GPA: " << gpa << "\n";
     return 0;
 }

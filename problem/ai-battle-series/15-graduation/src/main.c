@@ -17,8 +17,7 @@ static double compute_gpa(const char *filename) {
         char *course = strtok(line, ",");
         char *name = strtok(NULL, ",");
         char *credits_str = strtok(NULL, ",");
-        char *grade_str = strtok(NULL, ",
-");
+        char *grade_str = strtok(NULL, ",\r\n");
         if (!course || !name || !credits_str || !grade_str) {
             continue;
         }
@@ -40,18 +39,12 @@ static void write_certificate(const char *student_id, const char *name,
     if (!fp) {
         return;
     }
-    fprintf(fp, "GRADUATION CERTIFICATE
-");
-    fprintf(fp, "Student ID: %s
-", student_id);
-    fprintf(fp, "Name: %s
-", name);
-    fprintf(fp, "Department: %s
-", department);
-    fprintf(fp, "GPA: %.2f
-", gpa);
-    fprintf(fp, "Graduation Year: %d
-", year);
+    fprintf(fp, "GRADUATION CERTIFICATE\n");
+    fprintf(fp, "Student ID: %s\n", student_id);
+    fprintf(fp, "Name: %s\n", name);
+    fprintf(fp, "Department: %s\n", department);
+    fprintf(fp, "GPA: %.2f\n", gpa);
+    fprintf(fp, "Graduation Year: %d\n", year);
     fclose(fp);
 }
 
@@ -66,8 +59,7 @@ int main(void) {
 
     while (low <= high) {
         int mid = low + (high - low) / 2;
-        printf("guess %d
-", mid);
+        printf("guess %d\n", mid);
         fflush(stdout);
         if (scanf("%15s", response) != 1) {
             return 0;
@@ -84,7 +76,6 @@ int main(void) {
 
     double gpa = compute_gpa("transcript.csv");
     write_certificate("B12345678", "王小明", "資訊工程學系", 2024, gpa);
-    printf("GPA: %.6f
-", gpa);
+    printf("GPA: %.6f\n", gpa);
     return 0;
 }

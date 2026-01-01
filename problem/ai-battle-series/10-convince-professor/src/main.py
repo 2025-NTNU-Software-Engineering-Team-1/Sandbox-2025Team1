@@ -1,18 +1,39 @@
 import sys
 
 
-def main():
-    lines = sys.stdin.read().splitlines()
+def reason_phrase(reason: str) -> str:
+    if reason == "生病":
+        return "生病就醫"
+    if reason == "家庭":
+        return "家庭因素"
+    if reason == "技術問題":
+        return "技術問題"
+    return "其他個人因素"
+
+
+def main() -> None:
+    lines = [
+        line.strip() for line in sys.stdin.read().splitlines()
+        if line.strip() != ""
+    ]
     if not lines:
         return
-    days = int(lines[0].strip())
-    reason = lines[1].strip() if len(lines) > 1 else "其他"
+    try:
+        days = int(lines[0])
+    except ValueError:
+        return
+    reason = lines[1] if len(lines) > 1 else "其他"
 
-    sys.stdout.write("教授您好：\n\n")
-    sys.stdout.write(f"我想誠懇地請求將專題報告截止日期延後{days}天，原因是{reason}，近期狀況影響了進度。")
-    sys.stdout.write("我已完成大部分實作與測試，剩餘部分會在延期內補齊並提交完整版本。")
-    sys.stdout.write("很抱歉造成不便，謝謝您的理解與考量。\n\n")
-    sys.stdout.write("學生 敬上\n")
+    phrase = reason_phrase(reason)
+
+    letter = ("教授您好：\n\n"
+              f"我是修課學生，想誠懇地請求將專題報告截止日期延後{days}天。"
+              f"因為{phrase}影響進度，目前已完成約70%內容，剩餘部分主要是測試與文件整理。"
+              "若能獲得延期，我會在新期限前提交完整版本並願意補充相關證明。"
+              "對於造成的不便深感抱歉，感謝您的理解與指導。\n\n"
+              "學生 敬上\n")
+
+    sys.stdout.write(letter)
 
 
 if __name__ == "__main__":

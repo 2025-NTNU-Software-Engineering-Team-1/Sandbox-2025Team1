@@ -37,8 +37,7 @@ int main(void) {
         if (sum_weight != 0.0) {
             avg = sum_score / sum_weight;
         }
-        printf("%.6f
-", avg);
+        printf("%.6f\n", avg);
     }
 
     free(prefix_score);

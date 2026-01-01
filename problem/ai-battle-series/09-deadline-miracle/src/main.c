@@ -7,8 +7,7 @@ int main(void) {
         return 0;
     }
     if (n <= 0) {
-        printf("0
-");
+        printf("0\n");
         return 0;
     }
 
@@ -44,8 +43,7 @@ int main(void) {
         }
     }
 
-    printf("%d
-", len);
+    printf("%d\n", len);
     free(nums);
     free(tails);
     return 0;
